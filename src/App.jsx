@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs } from 'firebase/firestore';
-import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw } from 'lucide-react';
+import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw, Code2, Heart } from 'lucide-react';
 
 // --- Firebase Initialization ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -19,6 +19,7 @@ const firebaseConfig = typeof __firebase_config !== 'undefined'
 const app = initializeApp(firebaseConfig);
 const auth = getAuth(app);
 const db = getFirestore(app);
+const appId = typeof __app_id !== 'undefined' ? __app_id : 'real-chat-59b6a';
 
 // Unique ID Generator
 const generateId = () => {
@@ -37,7 +38,7 @@ export default function App() {
   const [currentGroup, setCurrentGroup] = useState(null);
   const [displayName, setDisplayName] = useState('');
 
-  // 1. Authenticate user anonymously
+  // Authenticate user anonymously
   const initAuth = async () => {
     setAuthLoading(true);
     setAuthError(null);
@@ -72,7 +73,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="animate-pulse flex flex-col items-center">
           <MessageSquare className="w-12 h-12 text-indigo-500 mb-4 animate-bounce" />
-          <p className="text-slate-400 font-medium text-center">Server se connect ho raha hai...</p>
+          <p className="text-slate-400 font-medium text-center">Connecting to server...</p>
         </div>
       </div>
     );
@@ -139,14 +140,26 @@ function JoinScreen({ onJoin }) {
   };
 
   return (
-    <div className="min-h-screen flex items-center justify-center p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4">
       <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
-        <div className="p-8 text-center bg-gradient-to-br from-indigo-900/50 to-slate-900">
-          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-500/20 text-indigo-400 mb-6">
+        
+        {/* Header Banner with Custom Developer Branding */}
+        <div className="p-8 text-center bg-gradient-to-br from-indigo-900/60 via-slate-900 to-slate-950 border-b border-slate-800/80 relative">
+          
+          {/* Developer Badge */}
+          <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold mb-4 shadow-sm">
+            <Code2 size={13} />
+            <span>Developed by Anish</span>
+          </div>
+
+          <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-500/20 text-indigo-400 mb-4 shadow-lg shadow-indigo-500/10">
             <MessageSquare size={32} />
           </div>
+          
           <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Whisper Room</h1>
-          <p className="text-slate-400 text-sm">Temporary & real-time group chat. No data is stored permanently.</p>
+          <p className="text-slate-400 text-sm leading-relaxed max-w-xs mx-auto">
+            Temporary & real-time secure group chat crafted with <Heart size={13} className="inline text-red-400 mx-0.5" fill="currentColor" /> by <span className="text-indigo-300 font-semibold">Anish</span>.
+          </p>
         </div>
         
         <form onSubmit={handleJoin} className="p-8 space-y-6">
@@ -164,7 +177,7 @@ function JoinScreen({ onJoin }) {
                 type="text"
                 value={name}
                 onChange={(e) => { setName(e.target.value); setError(''); }}
-                placeholder="e.g. Ali / Umar / Ahmed"
+                placeholder="e.g. Ali / Umar / Anish"
                 className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-600"
                 maxLength={20}
               />
@@ -176,7 +189,7 @@ function JoinScreen({ onJoin }) {
                 type="text"
                 value={group}
                 onChange={(e) => { setGroup(e.target.value); setError(''); }}
-                placeholder="e.g. a1"
+                placeholder="e.g. bmw"
                 className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-600"
                 maxLength={20}
               />
@@ -190,6 +203,13 @@ function JoinScreen({ onJoin }) {
             Join / Create Group
           </button>
         </form>
+
+        {/* Footer Credit */}
+        <div className="py-3 bg-slate-950/80 text-center border-t border-slate-800/50">
+          <p className="text-[11px] text-slate-500">
+            Powered by Anish • Real-Time Temporary Messaging
+          </p>
+        </div>
       </div>
     </div>
   );
@@ -204,17 +224,21 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [showMembers, setShowMembers] = useState(false);
   const [errorToast, setErrorToast] = useState(null);
   
+  // Unique member session ID per tab/device
+  const myMemberIdRef = useRef(generateId());
+  const myMemberId = myMemberIdRef.current;
+
   const [joinTime] = useState(Date.now());
   const messagesEndRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
   const channelRef = useRef(null);
 
-  // Root Collection Paths
+  // Firestore path collections
   const membersColName = `members_${groupName}`;
   const messagesColName = `messages_${groupName}`;
 
-  // Helper colors for different senders
+  // Unique text colors for members
   const nameColors = ['text-emerald-400', 'text-amber-400', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-orange-400'];
   const getNameColor = (name) => {
     let hash = 0;
@@ -224,12 +248,12 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     return nameColors[Math.abs(hash) % nameColors.length];
   };
 
-  // 1. Initialize Active User & Presence Tracking
+  // Presence & Real-Time Sync
   useEffect(() => {
     if (!user) return;
 
     const selfMember = {
-      id: user.uid,
+      id: myMemberId,
       name: displayName,
       joinedAt: Date.now(),
       lastSeen: Date.now()
@@ -237,7 +261,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
     setMembers([selfMember]);
 
-    // Setup local BroadcastChannel for multi-tab support
+    // Setup local BroadcastChannel for multi-tab sync
     if (typeof BroadcastChannel !== 'undefined') {
       const bc = new BroadcastChannel(`room_bc_${groupName}`);
       channelRef.current = bc;
@@ -261,9 +285,9 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
             return [...prev, { ...payload, lastSeen: Date.now() }];
           });
         } else if (type === 'MEMBER_LEAVE') {
-          setMembers((prev) => prev.filter((m) => m.id !== payload.userId));
+          setMembers((prev) => prev.filter((m) => m.id !== payload.memberId));
         } else if (type === 'PING') {
-          bc.postMessage({ type: 'HEARTBEAT', payload: selfMember });
+          bc.postMessage({ type: 'HEARTBEAT', payload: { ...selfMember, lastSeen: Date.now() } });
         }
       };
 
@@ -271,16 +295,18 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       bc.postMessage({ type: 'PING' });
     }
 
-    // Heartbeat Interval to broadcast presence
+    // Heartbeat Interval to update presence
     const heartbeatInterval = setInterval(() => {
       const now = Date.now();
+      const updatedSelf = { ...selfMember, lastSeen: now };
+
       if (channelRef.current) {
-        channelRef.current.postMessage({ type: 'HEARTBEAT', payload: { ...selfMember, lastSeen: now } });
+        channelRef.current.postMessage({ type: 'HEARTBEAT', payload: updatedSelf });
       }
-      // Update Firestore heartbeat
-      const memberRef = doc(db, membersColName, user.uid);
-      setDoc(memberRef, { ...selfMember, lastSeen: now }, { merge: true }).catch(() => {});
-    }, 5000);
+
+      const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
+      setDoc(memberDocRef, updatedSelf, { merge: true }).catch(() => {});
+    }, 4000);
 
     // Firestore real-time synchronization
     let unsubscribeMessages;
@@ -288,11 +314,11 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
     const setupFirestore = async () => {
       try {
-        const memberRef = doc(db, membersColName, user.uid);
-        await setDoc(memberRef, selfMember);
+        const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
+        await setDoc(memberDocRef, selfMember);
 
         // Listen for Members
-        const membersRef = collection(db, membersColName);
+        const membersRef = collection(db, 'artifacts', appId, 'public', 'data', membersColName);
         unsubscribeMembers = onSnapshot(membersRef, (snapshot) => {
           setMembers((prevMems) => {
             const memsMap = new Map();
@@ -305,8 +331,8 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           });
         }, (err) => console.warn("Firestore members listener notice:", err));
 
-        // Listen for Real-Time Messages
-        const messagesRef = collection(db, messagesColName);
+        // Listen for Messages
+        const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
         unsubscribeMessages = onSnapshot(messagesRef, (snapshot) => {
           setMessages((prevMsgs) => {
             const msgMap = new Map();
@@ -322,7 +348,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           });
         }, (err) => console.warn("Firestore messages listener notice:", err));
       } catch (err) {
-        console.warn("Firestore connection notice:", err);
+        console.warn("Firestore setup notice:", err);
       }
     };
 
@@ -338,36 +364,36 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       if (unsubscribeMessages) unsubscribeMessages();
       if (unsubscribeMembers) unsubscribeMembers();
       if (channelRef.current) {
-        channelRef.current.postMessage({ type: 'MEMBER_LEAVE', payload: { userId: user.uid } });
+        channelRef.current.postMessage({ type: 'MEMBER_LEAVE', payload: { memberId: myMemberId } });
         channelRef.current.close();
       }
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [user, groupName, displayName, joinTime]);
+  }, [user, groupName, displayName, joinTime, myMemberId]);
 
   // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // 2. Clean User Data on Exit
+  // Clean User Data on Exit
   const handleLeaveRoom = async () => {
     if (!user) return;
 
     if (channelRef.current) {
-      channelRef.current.postMessage({ type: 'MEMBER_LEAVE', payload: { userId: user.uid } });
+      channelRef.current.postMessage({ type: 'MEMBER_LEAVE', payload: { memberId: myMemberId } });
     }
 
     try {
-      const memberRef = doc(db, membersColName, user.uid);
-      await deleteDoc(memberRef);
+      const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
+      await deleteDoc(memberDocRef);
 
-      const messagesRef = collection(db, messagesColName);
+      const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
       const snapshot = await getDocs(messagesRef);
       
       const deletePromises = [];
       snapshot.forEach((docSnap) => {
-        if (docSnap.data().senderId === user.uid) {
+        if (docSnap.data().senderId === myMemberId) {
           deletePromises.push(deleteDoc(docSnap.ref));
         }
       });
@@ -382,7 +408,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     onLeave();
   };
 
-  // 3. Send Text or Audio Message
+  // Send Message
   const sendMessage = async (text = null, audioBase64 = null) => {
     if (!text && !audioBase64) return;
     if (!user) return;
@@ -390,14 +416,14 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     const msgId = generateId();
     const newMsg = {
       id: msgId,
-      senderId: user.uid,
+      senderId: myMemberId,
       senderName: displayName,
       text: text || '',
       audioData: audioBase64 || '',
       timestamp: Date.now()
     };
 
-    // Immediate local optimistic update
+    // Immediate local update
     setMessages((prev) => {
       if (prev.some((m) => m.id === msgId)) return prev;
       const updated = [...prev, newMsg];
@@ -412,14 +438,14 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
     // Sync to Firestore
     try {
-      const msgRef = doc(db, messagesColName, msgId);
+      const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
     } catch (err) {
-      console.warn("Firestore sync warning:", err);
+      console.warn("Firestore message sync notice:", err);
     }
   };
 
-  // 4. Voice Recording Logic
+  // Voice Recording Logic
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -462,10 +488,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     setTimeout(() => setErrorToast(null), 4000);
   };
 
-  // Check if member is online (active in last 15 seconds)
+  // Check online status
   const isMemberOnline = (member) => {
     if (!member.lastSeen) return true;
-    return (Date.now() - member.lastSeen) < 15000;
+    return (Date.now() - member.lastSeen) < 12000;
   };
 
   const onlineCount = members.filter(isMemberOnline).length;
@@ -488,7 +514,12 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
             <Users size={20} />
           </div>
           <div>
-            <h2 className="font-bold text-white leading-tight">#{groupName}</h2>
+            <div className="flex items-center gap-2">
+              <h2 className="font-bold text-white leading-tight">#{groupName}</h2>
+              <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-medium border border-indigo-500/20">
+                by Anish
+              </span>
+            </div>
             <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
               <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
               {onlineCount} {onlineCount === 1 ? 'online member' : 'online members'} ({members.length} total)
@@ -528,11 +559,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               </div>
             ) : (
               messages.map((msg) => {
-                const isMe = msg.senderId === user.uid;
+                const isMe = msg.senderId === myMemberId;
                 
                 return (
                   <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
-                    {/* ALWAYS SHOW SENDER NAME (WhatsApp Style) */}
                     <span className={`text-xs font-semibold mb-1 px-1 flex items-center gap-1 ${isMe ? 'text-indigo-400' : getNameColor(msg.senderName)}`}>
                       {msg.senderName} {isMe && <span className="text-[10px] text-slate-500 font-normal">(You)</span>}
                     </span>
@@ -603,7 +633,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               )}
             </form>
             <p className="text-center text-[10px] text-slate-500 mt-2">
-              All messages are temporary. History will be cleared when you leave the group.
+              All messages are temporary. Developed by <span className="text-slate-400 font-medium">Anish</span>.
             </p>
           </div>
         </div>
@@ -631,6 +661,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
             ) : (
               members.map(member => {
                 const online = isMemberOnline(member);
+                const isMe = member.id === myMemberId;
                 return (
                   <div key={member.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800/50 transition-colors">
                     <div className="relative">
@@ -645,10 +676,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                     </div>
                     <div className="flex-1 min-w-0">
                       <p className="text-sm font-medium text-slate-200 truncate">
-                        {member.name} {member.id === user.uid && <span className="text-xs text-indigo-400 ml-1">(You)</span>}
+                        {member.name} {isMe && <span className="text-xs text-indigo-400 ml-1">(You)</span>}
                       </p>
                       <p className="text-[10px] text-slate-500">
-                        {online ? <span className="text-green-400">Online</span> : <span>Offline</span>}
+                        {online ? <span className="text-green-400 font-medium">Online</span> : <span>Offline</span>}
                       </p>
                     </div>
                   </div>

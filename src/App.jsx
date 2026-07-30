@@ -1,8 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs } from 'firebase/firestore';
-import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw, Code2, Heart } from 'lucide-react';
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs, getDoc } from 'firebase/firestore';
+import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw, Code2, Heart, Lock, ShieldCheck, History, ArrowRight, KeyRound, MoreVertical, Menu } from 'lucide-react';
 
 // --- Firebase Initialization ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -50,7 +50,7 @@ export default function App() {
       }
     } catch (error) {
       console.error("Auth Error:", error);
-      setAuthError("Failed to connect to authentication server. Please refresh the page.");
+      setAuthError("فائر بیس سرور سے کنیکٹ ہونے میں مسئلہ آیا۔ براہ کرم صفحہ ریفریش کریں۔");
       setAuthLoading(false);
     }
   };
@@ -105,6 +105,7 @@ export default function App() {
     <div className="min-h-screen bg-slate-950 text-slate-100 font-sans selection:bg-indigo-500/30">
       {!currentGroup ? (
         <JoinScreen 
+          user={user}
           onJoin={(group, name) => {
             setDisplayName(name);
             setCurrentGroup(group);
@@ -122,49 +123,245 @@ export default function App() {
   );
 }
 
-// --- Join Screen Component ---
-function JoinScreen({ onJoin }) {
+// --- Join Screen Component with Personal Passcodes & 3-Dots Old Chats Drawer ---
+function JoinScreen({ user, onJoin }) {
   const [name, setName] = useState('');
   const [group, setGroup] = useState('');
+  const [secretPasscode, setSecretPasscode] = useState('');
   const [error, setError] = useState('');
+  const [isSubmitting, setIsSubmitting] = useState(false);
 
-  const handleJoin = (e) => {
+  // Drawer and Old Groups History State
+  const [showOldChatsDrawer, setShowOldChatsDrawer] = useState(false);
+  const [oldGroups, setOldGroups] = useState([]);
+  const [selectedOldGroup, setSelectedOldGroup] = useState(null);
+  const [oldGroupPasscode, setOldGroupPasscode] = useState('');
+  const [oldGroupError, setOldGroupError] = useState('');
+
+  // Local device storage key for joined groups
+  const LOCAL_STORAGE_KEY = 'whisper_joined_groups_history';
+
+  // Load Old Groups History
+  useEffect(() => {
+    if (!user) return;
+
+    // Load from Firestore all_groups_metadata
+    const historyRef = collection(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata');
+    const unsubscribe = onSnapshot(historyRef, (snapshot) => {
+      const groupsList = [];
+      snapshot.forEach((d) => {
+        groupsList.push(d.data());
+      });
+      // Sort by creation or update date
+      groupsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+      setOldGroups(groupsList);
+    }, (err) => console.warn("Old groups history fetch notice:", err));
+
+    return () => unsubscribe();
+  }, [user]);
+
+  // Helper to store group history locally on device
+  const saveToLocalHistory = (groupData) => {
+    try {
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      let list = saved ? JSON.parse(saved) : [];
+      const index = list.findIndex(g => g.groupName === groupData.groupName && g.displayName === groupData.displayName);
+      if (index >= 0) {
+        list[index] = { ...list[index], ...groupData };
+      } else {
+        list.unshift(groupData);
+      }
+      localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
+    } catch (e) {
+      console.warn("LocalStorage save warning:", e);
+    }
+  };
+
+  // Handle Form Submit for New or Existing Group (Personal Passcode Logic)
+  const handleJoin = async (e) => {
     e.preventDefault();
     if (!name.trim()) return setError('Please enter your display name.');
     if (!group.trim()) return setError('Please enter a group name.');
+    if (!secretPasscode.trim()) return setError('Please enter your personal secret passcode.');
     if (group.length > 20) return setError('Group name must be less than 20 characters.');
-    
-    // Normalize group name
+
     const normalizedGroup = group.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
-    onJoin(normalizedGroup, name.trim());
+    const normalizedName = name.trim().toLowerCase();
+    setIsSubmitting(true);
+    setError('');
+
+    try {
+      // Personal User Credential Key in Firestore: {groupName}_{userName}
+      const credentialDocId = `${normalizedGroup}_${normalizedName}`;
+      const credDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_credentials', credentialDocId);
+      const credSnap = await getDoc(credDocRef);
+
+      if (credSnap.exists()) {
+        const existingCred = credSnap.data();
+        // Check if entered passcode matches THIS USER'S previously set passcode
+        if (existingCred.passcode !== secretPasscode.trim()) {
+          setError('Your Passcode is Incorrect!');
+          setIsSubmitting(false);
+          return;
+        }
+      } else {
+        // Save new personal passcode for this specific user in this group
+        await setDoc(credDocRef, {
+          groupName: normalizedGroup,
+          displayName: name.trim(),
+          passcode: secretPasscode.trim(),
+          joinedAt: Date.now()
+        });
+      }
+
+      // Update Group Metadata (all members list)
+      const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
+      const groupMetaSnap = await getDoc(groupMetaRef);
+
+      if (groupMetaSnap.exists()) {
+        const existingMeta = groupMetaSnap.data();
+        const currentMembers = existingMeta.members || [];
+        if (!currentMembers.includes(name.trim())) {
+          await setDoc(groupMetaRef, {
+            ...existingMeta,
+            members: [...currentMembers, name.trim()]
+          }, { merge: true });
+        }
+      } else {
+        await setDoc(groupMetaRef, {
+          groupName: normalizedGroup,
+          createdBy: name.trim(),
+          createdAt: Date.now(),
+          createdAtFormatted: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' }),
+          members: [name.trim()]
+        });
+      }
+
+      // Save to local device history
+      saveToLocalHistory({
+        groupName: normalizedGroup,
+        displayName: name.trim(),
+        passcode: secretPasscode.trim(),
+        joinedAtFormatted: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      });
+
+      setIsSubmitting(false);
+      onJoin(normalizedGroup, name.trim());
+    } catch (err) {
+      console.error("Join group error:", err);
+      setError("Error joining group. Please try again.");
+      setIsSubmitting(false);
+    }
+  };
+
+  // Quick Unlock & Rejoin Old Group from History List
+  const handleOldGroupUnlock = async (e) => {
+    e.preventDefault();
+    if (!name.trim()) return setOldGroupError('Please enter Your Display Name above first!');
+    if (!oldGroupPasscode.trim()) return setOldGroupError('Please enter your personal secret passcode.');
+
+    const normalizedGroup = selectedOldGroup.groupName;
+    const normalizedName = name.trim().toLowerCase();
+
+    try {
+      const credentialDocId = `${normalizedGroup}_${normalizedName}`;
+      const credDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_credentials', credentialDocId);
+      const credSnap = await getDoc(credDocRef);
+
+      if (credSnap.exists()) {
+        const existingCred = credSnap.data();
+        if (existingCred.passcode !== oldGroupPasscode.trim()) {
+          setOldGroupError('Your Code is Incorrect!');
+          return;
+        }
+      } else {
+        // First time this specific user name joins this existing group
+        await setDoc(credDocRef, {
+          groupName: normalizedGroup,
+          displayName: name.trim(),
+          passcode: oldGroupPasscode.trim(),
+          joinedAt: Date.now()
+        });
+      }
+
+      // Update Group Metadata
+      const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
+      const groupMetaSnap = await getDoc(groupMetaRef);
+
+      if (groupMetaSnap.exists()) {
+        const existingMeta = groupMetaSnap.data();
+        const currentMembers = existingMeta.members || [];
+        if (!currentMembers.includes(name.trim())) {
+          await setDoc(groupMetaRef, {
+            ...existingMeta,
+            members: [...currentMembers, name.trim()]
+          }, { merge: true });
+        }
+      }
+
+      // Save locally
+      saveToLocalHistory({
+        groupName: normalizedGroup,
+        displayName: name.trim(),
+        passcode: oldGroupPasscode.trim(),
+        joinedAtFormatted: new Date().toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' })
+      });
+
+      setSelectedOldGroup(null);
+      setShowOldChatsDrawer(false);
+      onJoin(normalizedGroup, name.trim());
+    } catch (err) {
+      console.error("Old group unlock error:", err);
+      setOldGroupError("An error occurred. Please try again.");
+    }
   };
 
   return (
-    <div className="min-h-screen flex flex-col items-center justify-center p-4">
+    <div className="min-h-screen flex flex-col items-center justify-center p-4 relative">
+      
+      {/* Top Bar with 3-Dots Menu Button */}
+      <div className="w-full max-w-md flex items-center justify-between mb-4 px-2">
+        <div className="flex items-center gap-2">
+          <MessageSquare className="text-indigo-400" size={24} />
+          <span className="font-bold text-white text-lg tracking-tight">Whisper Room</span>
+        </div>
+
+        {/* 3-DOTS MENU BUTTON */}
+        <button
+          onClick={() => setShowOldChatsDrawer(true)}
+          className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 text-indigo-400 hover:text-indigo-300 border border-slate-800 hover:border-indigo-500/30 px-3.5 py-2 rounded-xl transition-all shadow-md group cursor-pointer"
+          title="Open Your Old Group Chats"
+        >
+          <History size={18} />
+          <span className="text-xs font-semibold">Old Chats</span>
+          <MoreVertical size={18} className="text-slate-400 group-hover:text-indigo-400" />
+        </button>
+      </div>
+
+      {/* Join / Create Form Card */}
       <div className="max-w-md w-full bg-slate-900 border border-slate-800 rounded-2xl shadow-2xl overflow-hidden">
         
-        {/* Header Banner with Custom Developer Branding */}
+        {/* Header Banner */}
         <div className="p-8 text-center bg-gradient-to-br from-indigo-900/60 via-slate-900 to-slate-950 border-b border-slate-800/80 relative">
-          
-          {/* Developer Badge */}
           <div className="inline-flex items-center gap-1.5 px-3 py-1 rounded-full bg-indigo-500/10 border border-indigo-500/20 text-indigo-400 text-xs font-semibold mb-4 shadow-sm">
             <Code2 size={13} />
             <span>Developed by Anish</span>
           </div>
 
           <div className="inline-flex items-center justify-center w-16 h-16 rounded-full bg-indigo-500/20 text-indigo-400 mb-4 shadow-lg shadow-indigo-500/10">
-            <MessageSquare size={32} />
+            <ShieldCheck size={32} />
           </div>
           
           <h1 className="text-3xl font-bold text-white mb-2 tracking-tight">Whisper Room</h1>
           <p className="text-slate-400 text-sm leading-relaxed max-w-xs mx-auto">
-            Temporary & real-time secure group chat crafted with <Heart size={13} className="inline text-red-400 mx-0.5" fill="currentColor" /> by <span className="text-indigo-300 font-semibold">Anish</span>.
+            Protected group chats with your personal passcode crafted with <Heart size={13} className="inline text-red-400 mx-0.5" fill="currentColor" /> by <span className="text-indigo-300 font-semibold">Anish</span>.
           </p>
         </div>
         
-        <form onSubmit={handleJoin} className="p-8 space-y-6">
+        {/* Form */}
+        <form onSubmit={handleJoin} className="p-8 space-y-5">
           {error && (
-            <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm">
+            <div className="flex items-center gap-2 p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-lg text-sm animate-shake">
               <AlertCircle size={16} />
               <span>{error}</span>
             </div>
@@ -172,11 +369,11 @@ function JoinScreen({ onJoin }) {
           
           <div className="space-y-4">
             <div>
-              <label className="block text-sm font-medium text-slate-400 mb-1.5">Display Name</label>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">Your Name (Display Name)</label>
               <input
                 type="text"
                 value={name}
-                onChange={(e) => { setName(e.target.value); setError(''); }}
+                onChange={(e) => { setName(e.target.value); setError(''); setOldGroupError(''); }}
                 placeholder="e.g. Ali / Umar / Anish"
                 className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-600"
                 maxLength={20}
@@ -184,33 +381,202 @@ function JoinScreen({ onJoin }) {
             </div>
             
             <div>
-              <label className="block text-sm font-medium text-slate-400 mb-1.5">Group Name</label>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">Group Name</label>
               <input
                 type="text"
                 value={group}
                 onChange={(e) => { setGroup(e.target.value); setError(''); }}
-                placeholder="e.g. bmw"
+                placeholder="e.g. academy-friends / bmw"
                 className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-600"
                 maxLength={20}
               />
+            </div>
+
+            <div>
+              <label className="block text-sm font-medium text-slate-300 mb-1.5">Your Secret Passcode</label>
+              <div className="relative">
+                <input
+                  type="password"
+                  value={secretPasscode}
+                  onChange={(e) => { setSecretPasscode(e.target.value); setError(''); }}
+                  placeholder="e.g. 1122 or secret123"
+                  className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl pl-4 pr-10 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all placeholder:text-slate-600"
+                  maxLength={20}
+                />
+                <Lock size={18} className="absolute right-3 top-1/2 -translate-y-1/2 text-slate-500" />
+              </div>
+              <p className="text-[11px] text-slate-500 mt-1">Set your personal secret code. Re-use this code when you rejoin.</p>
             </div>
           </div>
 
           <button
             type="submit"
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-xl transition-colors shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2"
+            disabled={isSubmitting}
+            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-3 rounded-xl transition-colors shadow-lg shadow-indigo-500/25 flex items-center justify-center gap-2 disabled:opacity-50 cursor-pointer"
           >
-            Join / Create Group
+            {isSubmitting ? <RefreshCw size={18} className="animate-spin" /> : <ArrowRight size={18} />}
+            <span>Join / Create Group</span>
           </button>
         </form>
 
         {/* Footer Credit */}
         <div className="py-3 bg-slate-950/80 text-center border-t border-slate-800/50">
           <p className="text-[11px] text-slate-500">
-            Powered by Anish • Real-Time Temporary Messaging
+            Powered by Anish • Protected Messaging
           </p>
         </div>
       </div>
+
+      {/* --- YOUR OLD GROUP CHATS DRAWER (Triggered by 3-Dots Menu or Bottom Card) --- */}
+      {showOldChatsDrawer && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-end animate-in fade-in duration-200">
+          <div className="w-full max-w-md bg-slate-900 border-l border-slate-800 h-full p-6 flex flex-col justify-between shadow-2xl overflow-hidden">
+            
+            <div className="space-y-4 flex-1 flex flex-col min-h-0">
+              <div className="flex items-center justify-between border-b border-slate-800 pb-4">
+                <div className="flex items-center gap-2">
+                  <History className="text-indigo-400" size={22} />
+                  <h2 className="text-xl font-bold text-white">Your Old Group Chats</h2>
+                </div>
+                <button
+                  onClick={() => setShowOldChatsDrawer(false)}
+                  className="p-2 text-slate-400 hover:text-white bg-slate-800 rounded-xl"
+                >
+                  <X size={18} />
+                </button>
+              </div>
+
+              <p className="text-xs text-slate-400 leading-relaxed">
+                Choose any group to rejoin. You must enter <span className="text-indigo-300 font-semibold">your personal secret passcode</span> to open old chat messages.
+              </p>
+
+              {oldGroups.length === 0 ? (
+                <div className="flex-1 flex flex-col items-center justify-center text-center text-slate-500 bg-slate-950/50 rounded-2xl border border-slate-800/50 p-6">
+                  <History size={36} className="mb-3 opacity-25" />
+                  <p className="text-sm font-medium">No old groups found</p>
+                  <p className="text-xs text-slate-600 mt-1">Create or join a group above to save it here.</p>
+                </div>
+              ) : (
+                <div className="flex-1 overflow-y-auto space-y-3 pr-1">
+                  {oldGroups.map((g) => (
+                    <div 
+                      key={g.groupName}
+                      onClick={() => {
+                        if (!name.trim()) {
+                          setError('Please enter Your Display Name in the form above first!');
+                          setShowOldChatsDrawer(false);
+                          window.scrollTo({ top: 0, behavior: 'smooth' });
+                          return;
+                        }
+                        setSelectedOldGroup(g);
+                        setOldGroupPasscode('');
+                        setOldGroupError('');
+                      }}
+                      className="p-4 bg-slate-950/80 hover:bg-indigo-950/40 border border-slate-800 hover:border-indigo-500/50 rounded-2xl transition-all cursor-pointer group flex items-center justify-between shadow-md"
+                    >
+                      <div className="space-y-1.5 min-w-0 pr-3">
+                        <div className="flex items-center gap-2">
+                          <span className="font-bold text-white text-base group-hover:text-indigo-300 transition-colors truncate">
+                            #{g.groupName}
+                          </span>
+                          <span className="text-[10px] px-2 py-0.5 rounded-full bg-slate-800 text-slate-400 border border-slate-700 shrink-0">
+                            {g.createdAtFormatted || 'Active'}
+                          </span>
+                        </div>
+                        
+                        <div className="flex items-center gap-1.5 text-xs text-slate-400 truncate">
+                          <Users size={14} className="text-slate-500 shrink-0" />
+                          <span className="truncate">
+                            {g.members && g.members.length > 0 
+                              ? g.members.join(', ') 
+                              : 'Members active'}
+                          </span>
+                        </div>
+                      </div>
+
+                      <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition-all flex items-center justify-center shrink-0">
+                        <KeyRound size={18} />
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
+            <div className="pt-4 border-t border-slate-800 text-center">
+              <button
+                onClick={() => setShowOldChatsDrawer(false)}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl text-sm font-semibold transition-colors"
+              >
+                Close Drawer
+              </button>
+            </div>
+
+          </div>
+        </div>
+      )}
+
+      {/* Passcode Modal for Old Group */}
+      {selectedOldGroup && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="max-w-sm w-full bg-slate-900 border border-indigo-500/30 rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200">
+            <div className="flex items-center justify-between border-b border-slate-800 pb-3">
+              <div className="flex items-center gap-2">
+                <Lock className="text-indigo-400" size={20} />
+                <h3 className="font-bold text-white">Enter Your Secret Code</h3>
+              </div>
+              <button 
+                onClick={() => setSelectedOldGroup(null)}
+                className="p-1 text-slate-400 hover:text-white rounded-lg bg-slate-800"
+              >
+                <X size={16} />
+              </button>
+            </div>
+
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Rejoining <span className="text-indigo-400 font-bold">#{selectedOldGroup.groupName}</span> as <span className="text-indigo-300 font-semibold">{name}</span>. Enter <span className="text-indigo-300 font-semibold">your secret passcode</span>.
+            </p>
+
+            {oldGroupError && (
+              <div className="p-3 bg-red-500/10 border border-red-500/20 text-red-400 rounded-xl text-xs flex items-center gap-2">
+                <AlertCircle size={16} />
+                <span>{oldGroupError}</span>
+              </div>
+            )}
+
+            <form onSubmit={handleOldGroupUnlock} className="space-y-4">
+              <div>
+                <label className="block text-xs font-medium text-slate-400 mb-1">Your Personal Passcode</label>
+                <input
+                  type="password"
+                  value={oldGroupPasscode}
+                  onChange={(e) => { setOldGroupPasscode(e.target.value); setOldGroupError(''); }}
+                  placeholder="e.g. 1122 or secret123"
+                  autoFocus
+                  className="w-full bg-slate-950 border border-slate-800 text-white rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                />
+              </div>
+
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={() => setSelectedOldGroup(null)}
+                  className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+                <button
+                  type="submit"
+                  className="flex-1 bg-indigo-600 hover:bg-indigo-700 text-white py-2.5 rounded-xl text-xs font-semibold shadow-md cursor-pointer"
+                >
+                  Unlock & Join
+                </button>
+              </div>
+            </form>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }
@@ -228,7 +594,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const myMemberIdRef = useRef(generateId());
   const myMemberId = myMemberIdRef.current;
 
-  const [joinTime] = useState(Date.now());
   const messagesEndRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -331,7 +696,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           });
         }, (err) => console.warn("Firestore members listener notice:", err));
 
-        // Listen for Messages
+        // Listen for Permanent Messages
         const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
         unsubscribeMessages = onSnapshot(messagesRef, (snapshot) => {
           setMessages((prevMsgs) => {
@@ -339,9 +704,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
             prevMsgs.forEach((m) => msgMap.set(m.id, m));
             snapshot.forEach((d) => {
               const data = d.data();
-              if (data.timestamp >= joinTime) {
-                msgMap.set(data.id, data);
-              }
+              msgMap.set(data.id, data);
             });
             const sorted = Array.from(msgMap.values());
             return sorted.sort((a, b) => a.timestamp - b.timestamp);
@@ -369,14 +732,14 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       }
       window.removeEventListener('beforeunload', handleBeforeUnload);
     };
-  }, [user, groupName, displayName, joinTime, myMemberId]);
+  }, [user, groupName, displayName, myMemberId]);
 
   // Auto scroll to bottom
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  // Clean User Data on Exit
+  // Handle Leave Room
   const handleLeaveRoom = async () => {
     if (!user) return;
 
@@ -387,19 +750,8 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     try {
       const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
       await deleteDoc(memberDocRef);
-
-      const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
-      const snapshot = await getDocs(messagesRef);
-      
-      const deletePromises = [];
-      snapshot.forEach((docSnap) => {
-        if (docSnap.data().senderId === myMemberId) {
-          deletePromises.push(deleteDoc(docSnap.ref));
-        }
-      });
-      await Promise.all(deletePromises);
     } catch (err) {
-      console.warn("Cleanup notice:", err);
+      console.warn("Leave notice:", err);
     }
   };
 
@@ -436,7 +788,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       channelRef.current.postMessage({ type: 'NEW_MSG', payload: newMsg });
     }
 
-    // Sync to Firestore
+    // Sync to Firestore permanently
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
@@ -536,7 +888,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           </button>
           <button
             onClick={triggerLeave}
-            className="flex items-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors text-sm font-medium border border-red-500/20"
+            className="flex items-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg transition-colors text-sm font-medium border border-red-500/20 cursor-pointer"
           >
             <LogOut size={16} />
             <span className="hidden sm:inline">Leave Group</span>
@@ -600,7 +952,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                   type="text"
                   value={inputText}
                   onChange={(e) => setInputText(e.target.value)}
-                  placeholder={isRecording ? "Recording voice message..." : "Type a temporary message..."}
+                  placeholder={isRecording ? "Recording voice message..." : "Type a message..."}
                   disabled={isRecording}
                   className="w-full bg-slate-950 border border-slate-700 text-white rounded-2xl pl-4 pr-12 py-3.5 focus:outline-none focus:border-indigo-500 focus:ring-1 focus:ring-indigo-500 disabled:opacity-50 transition-all placeholder:text-slate-500 shadow-inner"
                 />
@@ -609,7 +961,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               {inputText.trim() ? (
                 <button
                   type="submit"
-                  className="h-[52px] w-[52px] shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl flex items-center justify-center transition-colors shadow-lg shadow-indigo-500/25"
+                  className="h-[52px] w-[52px] shrink-0 bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl flex items-center justify-center transition-colors shadow-lg shadow-indigo-500/25 cursor-pointer"
                 >
                   <Send size={20} className="ml-1" />
                 </button>
@@ -621,7 +973,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                   onMouseLeave={stopRecording}
                   onTouchStart={startRecording}
                   onTouchEnd={stopRecording}
-                  className={`h-[52px] w-[52px] shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 ${
+                  className={`h-[52px] w-[52px] shrink-0 rounded-2xl flex items-center justify-center transition-all duration-300 cursor-pointer ${
                     isRecording 
                       ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40 scale-105' 
                       : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700 hover:border-slate-600'
@@ -633,7 +985,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               )}
             </form>
             <p className="text-center text-[10px] text-slate-500 mt-2">
-              All messages are temporary. Developed by <span className="text-slate-400 font-medium">Anish</span>.
+              Protected Messaging • Developed by <span className="text-slate-400 font-medium">Anish</span>.
             </p>
           </div>
         </div>

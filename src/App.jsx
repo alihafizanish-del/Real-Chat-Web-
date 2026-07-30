@@ -418,7 +418,7 @@ function JoinScreen({ user, onJoin }) {
 }
 
 // ==========================================
-// CHAT ROOM COMPONENT (Fully Synchronized & Dual-Channel Broadcast)
+// CHAT ROOM COMPONENT (Fully Synchronized & Voice Recording Fixed)
 // ==========================================
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
@@ -436,7 +436,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const messagesEndRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
-  const broadcastChannelRef = useRef(null);
 
   const membersColName = `members_${groupName}`;
   const messagesColName = `messages_${groupName}`;
@@ -448,7 +447,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     return nameColors[Math.abs(hash) % nameColors.length];
   };
 
-  // --- Real-time Firebase Sync & Local Broadcast Channel Dual Mechanism ---
+  // --- Real-time Firebase Sync for Members & Messages ---
   useEffect(() => {
     if (!user) return;
 
@@ -459,22 +458,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       lastSeen: Date.now()
     };
 
-    // Setup local BroadcastChannel for multi-tab sync as immediate fallback/companion
-    if (typeof BroadcastChannel !== 'undefined') {
-      const bc = new BroadcastChannel(`whisper_room_bc_${groupName}`);
-      broadcastChannelRef.current = bc;
-
-      bc.onmessage = (event) => {
-        const { type, payload } = event.data;
-        if (type === 'NEW_MSG') {
-          setMessages(prev => {
-            if (prev.some(m => m.id === payload.id)) return prev;
-            return [...prev, payload].sort((a, b) => a.timestamp - b.timestamp);
-          });
-        }
-      };
-    }
-
     let unsubscribeMessages;
     let unsubscribeMembers;
     let heartbeatInterval;
@@ -484,10 +467,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
         const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
         await setDoc(memberDocRef, selfMember, { merge: true });
 
-        // Heartbeat to keep status "Online" every 3 seconds
+        // Heartbeat every 4 seconds to keep member online
         heartbeatInterval = setInterval(() => {
           setDoc(memberDocRef, { lastSeen: Date.now() }, { merge: true }).catch(() => {});
-        }, 3000);
+        }, 4000);
 
         // Listen for all members in real-time
         const membersRef = collection(db, 'artifacts', appId, 'public', 'data', membersColName);
@@ -515,7 +498,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
       if (unsubscribeMessages) unsubscribeMessages();
       if (unsubscribeMembers) unsubscribeMembers();
-      if (broadcastChannelRef.current) broadcastChannelRef.current.close();
     };
   }, [user, groupName, displayName, myMemberId]);
 
@@ -546,21 +528,16 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       timestamp: Date.now()
     };
 
-    // 1. Optimistic UI push
+    // Optimistic UI push
     setMessages(prev => {
       if (prev.some(m => m.id === msgId)) return prev;
       return [...prev, newMsg].sort((a, b) => a.timestamp - b.timestamp);
     });
     setInputText('');
 
-    // 2. Broadcast via BroadcastChannel for instant multi-tab sync
-    if (broadcastChannelRef.current) {
-      broadcastChannelRef.current.postMessage({ type: 'NEW_MSG', payload: newMsg });
-    }
-
     if (!user) return;
 
-    // 3. Save to Firestore database immediately so remote users receive it
+    // Send to Firestore database immediately so everyone receives it
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
@@ -569,6 +546,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     }
   };
 
+  // Fixed Voice Recording Handler (Press & Hold)
   const startRecording = async () => {
     try {
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
@@ -598,7 +576,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   };
 
   const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording) {
+    if (mediaRecorderRef.current && isRecording && mediaRecorderRef.current.state !== 'inactive') {
       mediaRecorderRef.current.stop();
       setIsRecording(false);
     }
@@ -606,7 +584,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
   const isMemberOnline = (member) => {
     if (!member.lastSeen) return true;
-    return (Date.now() - member.lastSeen) < 10000; // 10 seconds threshold
+    return (Date.now() - member.lastSeen) < 12000; // 12 seconds threshold
   };
 
   const onlineCount = members.filter(isMemberOnline).length;
@@ -723,10 +701,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                 onMouseLeave={stopRecording}
                 onTouchStart={startRecording}
                 onTouchEnd={stopRecording}
-                className={`h-[52px] w-[52px] rounded-2xl flex items-center justify-center cursor-pointer transition-all shrink-0 ${
-                  isRecording ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                className={`h-[52px] w-[52px] rounded-2xl flex items-center justify-center cursor-pointer transition-all shrink-0 select-none ${
+                  isRecording ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40 scale-105' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
                 }`}
-                title="Hold to record voice message"
+                title="Press and hold to record voice message"
               >
                 {isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}
               </button>
@@ -832,7 +810,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                   }}
                   className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Trash2 size5={16} /> Delete for Everyone
+                  <Trash2 size={16} /> Delete for Everyone
                 </button>
               )}
 

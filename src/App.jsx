@@ -418,7 +418,7 @@ function JoinScreen({ user, onJoin }) {
 }
 
 // ==========================================
-// CHAT ROOM COMPONENT (Fully Synchronized & Voice Recording Fixed)
+// CHAT ROOM COMPONENT (Fully Synchronized & Bulletproof Dual-Sync)
 // ==========================================
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
@@ -436,6 +436,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const messagesEndRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const broadcastChannelRef = useRef(null);
 
   const membersColName = `members_${groupName}`;
   const messagesColName = `messages_${groupName}`;
@@ -447,7 +448,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     return nameColors[Math.abs(hash) % nameColors.length];
   };
 
-  // --- Real-time Firebase Sync for Members & Messages ---
+  // --- Dual Sync: Firestore + BroadcastChannel for Instant Cross-Device/Tab Delivery ---
   useEffect(() => {
     if (!user) return;
 
@@ -458,6 +459,22 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       lastSeen: Date.now()
     };
 
+    // Setup local BroadcastChannel for instant multi-tab sync
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel(`whisper_room_bc_${groupName}`);
+      broadcastChannelRef.current = bc;
+
+      bc.onmessage = (event) => {
+        const { type, payload } = event.data;
+        if (type === 'NEW_MSG') {
+          setMessages(prev => {
+            if (prev.some(m => m.id === payload.id)) return prev;
+            return [...prev, payload].sort((a, b) => a.timestamp - b.timestamp);
+          });
+        }
+      };
+    }
+
     let unsubscribeMessages;
     let unsubscribeMembers;
     let heartbeatInterval;
@@ -467,10 +484,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
         const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
         await setDoc(memberDocRef, selfMember, { merge: true });
 
-        // Heartbeat every 4 seconds to keep member online
+        // Heartbeat every 3 seconds to keep online status active
         heartbeatInterval = setInterval(() => {
           setDoc(memberDocRef, { lastSeen: Date.now() }, { merge: true }).catch(() => {});
-        }, 4000);
+        }, 3000);
 
         // Listen for all members in real-time
         const membersRef = collection(db, 'artifacts', appId, 'public', 'data', membersColName);
@@ -498,6 +515,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
       if (unsubscribeMessages) unsubscribeMessages();
       if (unsubscribeMembers) unsubscribeMembers();
+      if (broadcastChannelRef.current) broadcastChannelRef.current.close();
     };
   }, [user, groupName, displayName, myMemberId]);
 
@@ -528,16 +546,21 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       timestamp: Date.now()
     };
 
-    // Optimistic UI push
+    // 1. Optimistic UI push
     setMessages(prev => {
       if (prev.some(m => m.id === msgId)) return prev;
       return [...prev, newMsg].sort((a, b) => a.timestamp - b.timestamp);
     });
     setInputText('');
 
+    // 2. Broadcast via BroadcastChannel for instant local delivery
+    if (broadcastChannelRef.current) {
+      broadcastChannelRef.current.postMessage({ type: 'NEW_MSG', payload: newMsg });
+    }
+
     if (!user) return;
 
-    // Send to Firestore database immediately so everyone receives it
+    // 3. Save to Firestore database immediately so remote devices receive it
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
@@ -584,7 +607,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
   const isMemberOnline = (member) => {
     if (!member.lastSeen) return true;
-    return (Date.now() - member.lastSeen) < 12000; // 12 seconds threshold
+    return (Date.now() - member.lastSeen) < 10000; // 10 seconds threshold
   };
 
   const onlineCount = members.filter(isMemberOnline).length;

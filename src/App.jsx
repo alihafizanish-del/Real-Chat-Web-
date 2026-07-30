@@ -120,7 +120,6 @@ function JoinScreen({ user, onJoin }) {
 
   useEffect(() => {
     setOldGroups(getLocalHistory());
-
     if (!user) return;
     
     try {
@@ -139,12 +138,9 @@ function JoinScreen({ user, onJoin }) {
 
         const merged = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         setOldGroups(merged);
-      }, (err) => console.warn("Fetch notice:", err));
-      
+      });
       return () => unsubscribe();
-    } catch (e) {
-      console.warn("History notice:", e);
-    }
+    } catch (e) {}
   }, [user]);
 
   const saveToLocalHistory = (groupData) => {
@@ -167,9 +163,7 @@ function JoinScreen({ user, onJoin }) {
       let list = getLocalHistory().filter(g => g.groupName !== groupName);
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
       setOldGroups(list);
-    } catch (err) {
-      console.warn("Delete error:", err);
-    }
+    } catch (err) {}
   };
 
   const handleJoin = async (e) => {
@@ -418,7 +412,7 @@ function JoinScreen({ user, onJoin }) {
 }
 
 // ==========================================
-// CHAT ROOM COMPONENT (Fully Synchronized & Bulletproof Dual-Sync)
+// CHAT ROOM COMPONENT (Fully Synchronized & Fixed Voice Recording)
 // ==========================================
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
@@ -448,7 +442,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     return nameColors[Math.abs(hash) % nameColors.length];
   };
 
-  // --- Dual Sync: Firestore + BroadcastChannel for Instant Cross-Device/Tab Delivery ---
   useEffect(() => {
     if (!user) return;
 
@@ -459,7 +452,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       lastSeen: Date.now()
     };
 
-    // Setup local BroadcastChannel for instant multi-tab sync
     if (typeof BroadcastChannel !== 'undefined') {
       const bc = new BroadcastChannel(`whisper_room_bc_${groupName}`);
       broadcastChannelRef.current = bc;
@@ -484,12 +476,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
         const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
         await setDoc(memberDocRef, selfMember, { merge: true });
 
-        // Heartbeat every 3 seconds to keep online status active
         heartbeatInterval = setInterval(() => {
           setDoc(memberDocRef, { lastSeen: Date.now() }, { merge: true }).catch(() => {});
         }, 3000);
 
-        // Listen for all members in real-time
         const membersRef = collection(db, 'artifacts', appId, 'public', 'data', membersColName);
         unsubscribeMembers = onSnapshot(membersRef, (snapshot) => {
           const memsMap = new Map();
@@ -497,7 +487,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           setMembers(Array.from(memsMap.values()));
         }, (err) => console.warn("Members error:", err));
 
-        // Listen for all messages in real-time from Firestore
         const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
         unsubscribeMessages = onSnapshot(messagesRef, (snapshot) => {
           const msgsMap = new Map();
@@ -546,21 +535,18 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       timestamp: Date.now()
     };
 
-    // 1. Optimistic UI push
     setMessages(prev => {
       if (prev.some(m => m.id === msgId)) return prev;
       return [...prev, newMsg].sort((a, b) => a.timestamp - b.timestamp);
     });
     setInputText('');
 
-    // 2. Broadcast via BroadcastChannel for instant local delivery
     if (broadcastChannelRef.current) {
       broadcastChannelRef.current.postMessage({ type: 'NEW_MSG', payload: newMsg });
     }
 
     if (!user) return;
 
-    // 3. Save to Firestore database immediately so remote devices receive it
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
@@ -569,39 +555,39 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     }
   };
 
-  // Fixed Voice Recording Handler (Press & Hold)
-  const startRecording = async () => {
-    try {
-      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
-      const mediaRecorder = new MediaRecorder(stream);
-      mediaRecorderRef.current = mediaRecorder;
-      audioChunksRef.current = [];
+  // --- FIXED VOICE RECORDING LOGIC (Click to Start / Click to Stop & Send) ---
+  const toggleRecording = async () => {
+    if (!isRecording) {
+      try {
+        const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+        const mediaRecorder = new MediaRecorder(stream);
+        mediaRecorderRef.current = mediaRecorder;
+        audioChunksRef.current = [];
 
-      mediaRecorder.ondataavailable = (e) => {
-        if (e.data.size > 0) audioChunksRef.current.push(e.data);
-      };
-
-      mediaRecorder.onstop = async () => {
-        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
-        const reader = new FileReader();
-        reader.readAsDataURL(audioBlob);
-        reader.onloadend = () => {
-          sendMessage(null, reader.result);
+        mediaRecorder.ondataavailable = (e) => {
+          if (e.data.size > 0) audioChunksRef.current.push(e.data);
         };
-        stream.getTracks().forEach(track => track.stop());
-      };
 
-      mediaRecorder.start();
-      setIsRecording(true);
-    } catch (err) {
-      alert("Microphone permission is required!");
-    }
-  };
+        mediaRecorder.onstop = async () => {
+          const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+          const reader = new FileReader();
+          reader.readAsDataURL(audioBlob);
+          reader.onloadend = () => {
+            sendMessage(null, reader.result);
+          };
+          stream.getTracks().forEach(track => track.stop());
+        };
 
-  const stopRecording = () => {
-    if (mediaRecorderRef.current && isRecording && mediaRecorderRef.current.state !== 'inactive') {
-      mediaRecorderRef.current.stop();
-      setIsRecording(false);
+        mediaRecorder.start();
+        setIsRecording(true);
+      } catch (err) {
+        alert("Microphone permission is required!");
+      }
+    } else {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        mediaRecorderRef.current.stop();
+        setIsRecording(false);
+      }
     }
   };
 
@@ -707,7 +693,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               type="text"
               value={inputText}
               onChange={(e) => { if (e.target.value.length <= 500) setInputText(e.target.value); }}
-              placeholder={isRecording ? "Recording voice message..." : "Type your message here..."}
+              placeholder={isRecording ? "Recording voice message... Click stop when done." : "Type your message here..."}
               disabled={isRecording}
               className="flex-1 bg-slate-950 border border-slate-700 text-white rounded-2xl px-5 py-3.5 focus:outline-none focus:border-indigo-500"
             />
@@ -719,15 +705,11 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
             ) : (
               <button
                 type="button"
-                onMouseDown={startRecording}
-                onMouseUp={stopRecording}
-                onMouseLeave={stopRecording}
-                onTouchStart={startRecording}
-                onTouchEnd={stopRecording}
+                onClick={toggleRecording}
                 className={`h-[52px] w-[52px] rounded-2xl flex items-center justify-center cursor-pointer transition-all shrink-0 select-none ${
                   isRecording ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40 scale-105' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
                 }`}
-                title="Press and hold to record voice message"
+                title={isRecording ? "Click to stop and send recording" : "Click to start recording voice message"}
               >
                 {isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}
               </button>
@@ -753,9 +735,9 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                     {member.name.charAt(0).toUpperCase()}
                   </div>
                   {online ? (
-                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></span>
+                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full" title="Online"></span>
                   ) : (
-                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-slate-600 border-2 border-slate-900 rounded-full"></span>
+                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-slate-600 border-2 border-slate-900 rounded-full" title="Offline"></span>
                   )}
                 </div>
                 <div className="min-w-0 flex-1">

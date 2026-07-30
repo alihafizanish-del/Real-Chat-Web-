@@ -510,6 +510,9 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const myMemberId = myMemberIdRef.current;
 
   const messagesEndRef = useRef(null);
+  const mediaRecorderRef = useRef(null);
+  const audioChunksRef = useRef([]);
+
   const membersColName = `members_${groupName}`;
   const messagesColName = `messages_${groupName}`;
 
@@ -596,8 +599,8 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     onLeave();
   };
 
-  const sendMessage = async (text = null) => {
-    if (!text) return;
+  const sendMessage = async (text = null, audioBase64 = null) => {
+    if (!text && !audioBase64) return;
     if (!user) return;
 
     const msgId = generateId();
@@ -605,7 +608,8 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       id: msgId,
       senderId: myMemberId,
       senderName: displayName,
-      text: text,
+      text: text || '',
+      audioData: audioBase64 || '',
       timestamp: Date.now()
     };
 
@@ -617,6 +621,44 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     } catch (err) {
       console.error("Error sending message to Firebase:", err);
       showError("Failed to send message.");
+    }
+  };
+
+  // Voice recording handlers
+  const startRecording = async () => {
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      const mediaRecorder = new MediaRecorder(stream);
+      mediaRecorderRef.current = mediaRecorder;
+      audioChunksRef.current = [];
+
+      mediaRecorder.ondataavailable = (e) => {
+        if (e.data.size > 0) audioChunksRef.current.push(e.data);
+      };
+
+      mediaRecorder.onstop = async () => {
+        const audioBlob = new Blob(audioChunksRef.current, { type: 'audio/webm' });
+        const reader = new FileReader();
+        reader.readAsDataURL(audioBlob);
+        reader.onloadend = () => {
+          const base64String = reader.result;
+          sendMessage(null, base64String);
+        };
+        stream.getTracks().forEach(track => track.stop());
+      };
+
+      mediaRecorder.start();
+      setIsRecording(true);
+    } catch (err) {
+      console.error("Microphone permission error", err);
+      showError("Microphone permission is required for voice notes.");
+    }
+  };
+
+  const stopRecording = () => {
+    if (mediaRecorderRef.current && isRecording) {
+      mediaRecorderRef.current.stop();
+      setIsRecording(false);
     }
   };
 
@@ -684,7 +726,13 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                       {msg.senderName} {isMe && '(You)'}
                     </span>
                     <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 ${isMe ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700'}`}>
-                      <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>
+                      {msg.text && <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>}
+                      {msg.audioData && (
+                        <div className="flex items-center gap-2 py-1">
+                          <Volume2 size={20} className={isMe ? 'text-indigo-200' : 'text-slate-400'} />
+                          <audio controls src={msg.audioData} className="h-8 w-48 sm:w-64 max-w-full" />
+                        </div>
+                      )}
                     </div>
                   </div>
                 );
@@ -706,12 +754,31 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                     setInputText(e.target.value);
                   }
                 }}
-                placeholder="Type a message..."
+                placeholder={isRecording ? "Recording voice note..." : "Type a message..."}
+                disabled={isRecording}
                 className="flex-1 bg-slate-950 border border-slate-700 text-white rounded-2xl px-4 py-3.5 focus:outline-none focus:border-indigo-500"
               />
-              <button type="submit" className="h-[52px] w-[52px] bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl flex items-center justify-center cursor-pointer">
-                <Send size={20} />
-              </button>
+
+              {inputText.trim() ? (
+                <button type="submit" className="h-[52px] w-[52px] bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl flex items-center justify-center cursor-pointer">
+                  <Send size={20} />
+                </button>
+              ) : (
+                <button
+                  type="button"
+                  onMouseDown={startRecording}
+                  onMouseUp={stopRecording}
+                  onMouseLeave={stopRecording}
+                  onTouchStart={startRecording}
+                  onTouchEnd={stopRecording}
+                  className={`h-[52px] w-[52px] rounded-2xl flex items-center justify-center cursor-pointer transition-all ${
+                    isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                  }`}
+                  title="Hold to record voice message"
+                >
+                  {isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}
+                </button>
+              )}
             </form>
           </div>
         </div>

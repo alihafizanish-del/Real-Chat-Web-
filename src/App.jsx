@@ -356,7 +356,7 @@ function JoinScreen({ user, onJoin }) {
                         className="space-y-1 min-w-0 pr-2 flex-1 cursor-pointer"
                       >
                         <span className="font-bold text-white text-base">#{g.groupName}</span>
-                        <p className="text-xs text-slate-400">Total Members: {g.members?.length || 1}</p>
+                        <p className="text-xs text-slate-400">Created by: {g.createdBy || 'User'}</p>
                       </div>
 
                       <div className="flex gap-2">
@@ -366,12 +366,14 @@ function JoinScreen({ user, onJoin }) {
                             setSelectedOldGroup(g);
                           }}
                           className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-600 hover:text-white flex items-center justify-center cursor-pointer"
+                          title="Rejoin Group"
                         >
                           <KeyRound size={18} />
                         </button>
                         <button
                           onClick={() => handleDeleteOldGroup(g.groupName)}
                           className="w-9 h-9 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-600 hover:text-white flex items-center justify-center cursor-pointer"
+                          title="Delete Group"
                         >
                           <Trash2 size={16} />
                         </button>
@@ -388,7 +390,7 @@ function JoinScreen({ user, onJoin }) {
       {selectedOldGroup && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
           <div className="max-w-sm w-full bg-slate-900 border border-indigo-500/30 rounded-2xl p-6 shadow-2xl space-y-4">
-            <h3 className="font-bold text-white">Enter Passcode</h3>
+            <h3 className="font-bold text-white">Enter Passcode for #{selectedOldGroup.groupName}</h3>
             {oldGroupError && <p className="text-xs text-red-400">{oldGroupError}</p>}
             <form onSubmit={handleOldGroupUnlock} className="space-y-4">
               <input
@@ -412,7 +414,7 @@ function JoinScreen({ user, onJoin }) {
 }
 
 // ==========================================
-// CHAT ROOM COMPONENT (Fully Synchronized & Fixed Voice Recording)
+// CHAT ROOM COMPONENT (Fully Synchronized & Fixed Members List & Voice)
 // ==========================================
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
@@ -555,7 +557,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     }
   };
 
-  // --- FIXED VOICE RECORDING LOGIC (Click to Start / Click to Stop & Send) ---
+  // --- VOICE RECORDING HANDLER (Click to start, click to stop & send) ---
   const toggleRecording = async () => {
     if (!isRecording) {
       try {
@@ -593,7 +595,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
   const isMemberOnline = (member) => {
     if (!member.lastSeen) return true;
-    return (Date.now() - member.lastSeen) < 10000; // 10 seconds threshold
+    return (Date.now() - member.lastSeen) < 10000;
   };
 
   const onlineCount = members.filter(isMemberOnline).length;
@@ -693,7 +695,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               type="text"
               value={inputText}
               onChange={(e) => { if (e.target.value.length <= 500) setInputText(e.target.value); }}
-              placeholder={isRecording ? "Recording voice message... Click stop when done." : "Type your message here..."}
+              placeholder={isRecording ? "Recording voice message... Click stop square when done." : "Type your message here..."}
               disabled={isRecording}
               className="flex-1 bg-slate-950 border border-slate-700 text-white rounded-2xl px-5 py-3.5 focus:outline-none focus:border-indigo-500"
             />
@@ -709,7 +711,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                 className={`h-[52px] w-[52px] rounded-2xl flex items-center justify-center cursor-pointer transition-all shrink-0 select-none ${
                   isRecording ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40 scale-105' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
                 }`}
-                title={isRecording ? "Click to stop and send recording" : "Click to start recording voice message"}
+                title={isRecording ? "Click to stop recording" : "Click to start recording"}
               >
                 {isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}
               </button>

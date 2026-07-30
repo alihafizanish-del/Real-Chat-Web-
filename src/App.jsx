@@ -44,14 +44,14 @@ export default function App() {
           await signInAnonymously(auth);
         }
       } catch (error) {
-        console.error("Auth Initialization Error:", error);
+        console.error("Auth Error:", error);
       }
     };
 
     initAuth();
 
     const unsubscribe = onAuthStateChanged(auth, (u) => {
-      setUser(u); // Set the actual Firebase user (or null)
+      setUser(u);
       setAuthLoading(false);
     });
 
@@ -63,7 +63,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="animate-pulse flex flex-col items-center">
           <MessageSquare className="w-12 h-12 text-indigo-500 mb-4 animate-bounce" />
-          <p className="text-slate-400 font-medium">Connecting...</p>
+          <p className="text-slate-400 font-medium">Connecting to server...</p>
         </div>
       </div>
     );
@@ -121,7 +121,7 @@ function JoinScreen({ user, onJoin }) {
   useEffect(() => {
     setOldGroups(getLocalHistory());
 
-    if (!user) return; // Prevent querying if not authenticated
+    if (!user) return;
     
     try {
       const historyRef = collection(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata');
@@ -168,13 +168,13 @@ function JoinScreen({ user, onJoin }) {
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
       setOldGroups(list);
     } catch (err) {
-      console.warn("Delete old group error:", err);
+      console.warn("Delete error:", err);
     }
   };
 
   const handleJoin = async (e) => {
     e.preventDefault();
-    if (!name.trim() || !group.trim() || !secretPasscode.trim()) {
+    if (!name.name?.trim && (!name.trim() || !group.trim() || !secretPasscode.trim())) {
       return setError('Please fill all fields completely.');
     }
     
@@ -208,13 +208,13 @@ function JoinScreen({ user, onJoin }) {
       onJoin(normalizedGroup, name.trim());
     } catch (err) {
       setIsSubmitting(false);
-      onJoin(normalizedGroup, name.trim()); // Fallback join using local broadcast
+      onJoin(normalizedGroup, name.trim());
     }
   };
 
   const handleOldGroupUnlock = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return setOldGroupError('Enter your Display Name in the main form first!');
+    if (!name.trim()) return setOldGroupError('Enter your Display Name first!');
     if (!oldGroupPasscode.trim()) return setOldGroupError('Enter passcode!');
 
     const foundGroup = oldGroups.find(g => g.groupName === selectedOldGroup.groupName);
@@ -239,7 +239,7 @@ function JoinScreen({ user, onJoin }) {
       setShowOldChatsDrawer(false);
       onJoin(normalizedGroup, name.trim());
     } catch (err) {
-      onJoin(normalizedGroup, name.trim()); // Fallback
+      onJoin(normalizedGroup, name.trim());
     }
   };
 
@@ -356,7 +356,7 @@ function JoinScreen({ user, onJoin }) {
                     <div key={g.groupName} className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl flex items-center justify-between shadow-md">
                       <div 
                         onClick={() => {
-                          if (!name.trim()) return setError('Please enter your Name in the main form first!');
+                          if (!name.trim()) return setError('Please enter your Name first!');
                           setSelectedOldGroup(g);
                         }}
                         className="space-y-1 min-w-0 pr-2 flex-1 cursor-pointer"
@@ -368,7 +368,7 @@ function JoinScreen({ user, onJoin }) {
                       <div className="flex gap-2">
                         <button
                           onClick={() => {
-                            if (!name.trim()) return setError('Please enter your Name in the main form first!');
+                            if (!name.trim()) return setError('Please enter your Name first!');
                             setSelectedOldGroup(g);
                           }}
                           className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-600 hover:text-white flex items-center justify-center cursor-pointer"
@@ -418,7 +418,7 @@ function JoinScreen({ user, onJoin }) {
 }
 
 // ==========================================
-// CHAT ROOM COMPONENT
+// CHAT ROOM COMPONENT (Fully Synchronized)
 // ==========================================
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
@@ -440,7 +440,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const membersColName = `members_${groupName}`;
   const messagesColName = `messages_${groupName}`;
 
-  // Name colors based on string hash
   const nameColors = ['text-emerald-400', 'text-amber-400', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-orange-400'];
   const getNameColor = (name) => {
     let hash = 0;
@@ -448,7 +447,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     return nameColors[Math.abs(hash) % nameColors.length];
   };
 
-  // --- Real-time Firebase Sync ---
+  // --- Real-time Firebase Sync for Members & Messages ---
   useEffect(() => {
     if (!user) return;
 
@@ -465,32 +464,29 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
     const setupFirestore = async () => {
       try {
-        // Register self as a member
         const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
-        await setDoc(memberDocRef, selfMember);
+        await setDoc(memberDocRef, selfMember, { merge: true });
 
-        // Heartbeat to keep status "Online"
+        // Update heartbeat every 4 seconds to maintain accurate online status
         heartbeatInterval = setInterval(() => {
           setDoc(memberDocRef, { lastSeen: Date.now() }, { merge: true }).catch(() => {});
-        }, 5000);
+        }, 4000);
 
-        // Listen for Members
+        // Listen for all members in real-time
         const membersRef = collection(db, 'artifacts', appId, 'public', 'data', membersColName);
         unsubscribeMembers = onSnapshot(membersRef, (snapshot) => {
           const memsMap = new Map();
           snapshot.forEach((d) => memsMap.set(d.id, d.data()));
           setMembers(Array.from(memsMap.values()));
-        }, (err) => console.warn("Members error:", err));
+        }, (err) => console.warn("Members listener error:", err));
 
-        // Listen for Messages
+        // Listen for all messages in real-time
         const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
         unsubscribeMessages = onSnapshot(messagesRef, (snapshot) => {
-          setMessages(prev => {
-             const map = new Map(prev.map(m => [m.id, m]));
-             snapshot.forEach(d => map.set(d.id, d.data()));
-             return Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
-          });
-        }, (err) => console.warn("Messages error:", err));
+          const msgsMap = new Map();
+          snapshot.forEach((d) => msgsMap.set(d.id, d.data()));
+          setMessages(Array.from(msgsMap.values()).sort((a, b) => a.timestamp - b.timestamp));
+        }, (err) => console.warn("Messages listener error:", err));
       } catch (err) {
         console.error("Firestore setup error:", err);
       }
@@ -505,20 +501,18 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     };
   }, [user, groupName, displayName, myMemberId]);
 
-  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages, deletedForMeIds]);
 
-  // --- Actions ---
   const handleLeaveGroup = async () => {
     try {
       if (user) {
         const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
-        await deleteDoc(memberDocRef); // Remove from online members
+        await deleteDoc(memberDocRef);
       }
     } catch (err) {}
-    onLeave(); // Return to home screen
+    onLeave();
   };
 
   const sendMessage = async (text = null, audioBase64 = null) => {
@@ -534,21 +528,21 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       timestamp: Date.now()
     };
 
-    // 1. Optimistic UI update
+    // Optimistic UI push
     setMessages(prev => {
-      if(prev.some(m => m.id === msgId)) return prev;
+      if (prev.some(m => m.id === msgId)) return prev;
       return [...prev, newMsg].sort((a, b) => a.timestamp - b.timestamp);
     });
     setInputText('');
 
     if (!user) return;
 
-    // 2. Save to Firestore
+    // Send to Firestore database immediately so everyone receives it
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
     } catch (err) {
-      console.error("Failed to send to DB:", err);
+      console.error("Failed to send message to database:", err);
     }
   };
 
@@ -568,7 +562,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = () => {
-          sendMessage(null, reader.result); // Send audio as base64
+          sendMessage(null, reader.result);
         };
         stream.getTracks().forEach(track => track.stop());
       };
@@ -589,7 +583,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
   const isMemberOnline = (member) => {
     if (!member.lastSeen) return true;
-    return (Date.now() - member.lastSeen) < 15000; // 15 seconds threshold
+    return (Date.now() - member.lastSeen) < 10000; // 10 seconds threshold
   };
 
   const onlineCount = members.filter(isMemberOnline).length;
@@ -598,7 +592,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   return (
     <div className="flex h-screen bg-slate-950 relative overflow-hidden">
       
-      {/* LEFT / MAIN SIDE: Chat Area */}
+      {/* CHAT AREA */}
       <div className="flex-1 flex flex-col min-w-0 bg-[#0f172a] h-full">
         
         {/* HEADER */}
@@ -614,7 +608,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               </div>
               <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
                 <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-                {onlineCount} Online | {members.length} Total
+                {onlineCount} Online | {members.length} Total Members
               </p>
             </div>
           </div>
@@ -641,7 +635,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           {visibleMessages.length === 0 ? (
             <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
               <MessageSquare size={48} className="opacity-20" />
-              <p className="text-sm">No messages yet. Start the conversation!</p>
+              <p className="text-sm">No messages yet. Start chatting!</p>
             </div>
           ) : (
             visibleMessages.map((msg) => {
@@ -649,19 +643,13 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
               
               return (
                 <div key={msg.id} className={`flex flex-col w-full ${isMe ? 'items-end' : 'items-start'}`}>
-                  
-                  {/* Sender Name */}
                   <span className={`text-xs font-semibold mb-1 px-1 ${isMe ? 'text-indigo-400' : getNameColor(msg.senderName)}`}>
                     {msg.senderName} {isMe && '(You)'}
                   </span>
 
-                  {/* Message Bubble + Delete Button Container */}
                   <div className={`relative flex items-center gap-2 max-w-[85%] sm:max-w-[70%] group ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
-                    
-                    {/* Message Bubble */}
                     <div className={`rounded-2xl px-4 py-2.5 shadow-md ${isMe ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700'}`}>
                       {msg.text && <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>}
-                      
                       {msg.audioData && (
                         <div className="flex items-center gap-2 py-1">
                           <Volume2 size={20} className={isMe ? 'text-indigo-200' : 'text-slate-400'} />
@@ -670,7 +658,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                       )}
                     </div>
 
-                    {/* Delete Option Icon (Shows on hover/tap) */}
                     <button
                       onClick={() => setActiveDeleteMsg(msg)}
                       className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-slate-500 hover:text-red-400 bg-slate-900/80 rounded-full border border-slate-800 shrink-0 cursor-pointer"
@@ -678,7 +665,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                     >
                       <MoreVertical size={16} />
                     </button>
-
                   </div>
                 </div>
               );
@@ -726,7 +712,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
         </div>
       </div>
 
-      {/* RIGHT SIDE: Members List (Desktop) */}
+      {/* MEMBERS SIDEBAR (Desktop) */}
       <div className="w-64 bg-slate-900 border-l border-slate-800 flex flex-col hidden md:flex shrink-0 h-full">
         <div className="p-4 border-b border-slate-800 flex items-center gap-2 text-slate-200">
           <Users size={18} className="text-slate-400" />
@@ -831,7 +817,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                 onClick={() => setActiveDeleteMsg(null)}
                 className="w-full bg-transparent hover:bg-slate-800 text-slate-400 py-2 rounded-xl text-xs font-medium cursor-pointer"
               >
-                Cancel
+                Cancel code
               </button>
             </div>
           </div>

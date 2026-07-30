@@ -174,7 +174,7 @@ function JoinScreen({ user, onJoin }) {
 
   const handleJoin = async (e) => {
     e.preventDefault();
-    if (!name.name?.trim && (!name.trim() || !group.trim() || !secretPasscode.trim())) {
+    if (!name.trim() || !group.trim() || !secretPasscode.trim()) {
       return setError('Please fill all fields completely.');
     }
     
@@ -418,7 +418,7 @@ function JoinScreen({ user, onJoin }) {
 }
 
 // ==========================================
-// CHAT ROOM COMPONENT (Fully Synchronized)
+// CHAT ROOM COMPONENT (Fully Synchronized & Dual-Channel Broadcast)
 // ==========================================
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
@@ -436,6 +436,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const messagesEndRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
+  const broadcastChannelRef = useRef(null);
 
   const membersColName = `members_${groupName}`;
   const messagesColName = `messages_${groupName}`;
@@ -447,7 +448,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     return nameColors[Math.abs(hash) % nameColors.length];
   };
 
-  // --- Real-time Firebase Sync for Members & Messages ---
+  // --- Real-time Firebase Sync & Local Broadcast Channel Dual Mechanism ---
   useEffect(() => {
     if (!user) return;
 
@@ -458,6 +459,22 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       lastSeen: Date.now()
     };
 
+    // Setup local BroadcastChannel for multi-tab sync as immediate fallback/companion
+    if (typeof BroadcastChannel !== 'undefined') {
+      const bc = new BroadcastChannel(`whisper_room_bc_${groupName}`);
+      broadcastChannelRef.current = bc;
+
+      bc.onmessage = (event) => {
+        const { type, payload } = event.data;
+        if (type === 'NEW_MSG') {
+          setMessages(prev => {
+            if (prev.some(m => m.id === payload.id)) return prev;
+            return [...prev, payload].sort((a, b) => a.timestamp - b.timestamp);
+          });
+        }
+      };
+    }
+
     let unsubscribeMessages;
     let unsubscribeMembers;
     let heartbeatInterval;
@@ -467,10 +484,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
         const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
         await setDoc(memberDocRef, selfMember, { merge: true });
 
-        // Update heartbeat every 4 seconds to maintain accurate online status
+        // Heartbeat to keep status "Online" every 3 seconds
         heartbeatInterval = setInterval(() => {
           setDoc(memberDocRef, { lastSeen: Date.now() }, { merge: true }).catch(() => {});
-        }, 4000);
+        }, 3000);
 
         // Listen for all members in real-time
         const membersRef = collection(db, 'artifacts', appId, 'public', 'data', membersColName);
@@ -478,15 +495,15 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           const memsMap = new Map();
           snapshot.forEach((d) => memsMap.set(d.id, d.data()));
           setMembers(Array.from(memsMap.values()));
-        }, (err) => console.warn("Members listener error:", err));
+        }, (err) => console.warn("Members error:", err));
 
-        // Listen for all messages in real-time
+        // Listen for all messages in real-time from Firestore
         const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
         unsubscribeMessages = onSnapshot(messagesRef, (snapshot) => {
           const msgsMap = new Map();
           snapshot.forEach((d) => msgsMap.set(d.id, d.data()));
           setMessages(Array.from(msgsMap.values()).sort((a, b) => a.timestamp - b.timestamp));
-        }, (err) => console.warn("Messages listener error:", err));
+        }, (err) => console.warn("Messages error:", err));
       } catch (err) {
         console.error("Firestore setup error:", err);
       }
@@ -498,6 +515,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       if (heartbeatInterval) clearInterval(heartbeatInterval);
       if (unsubscribeMessages) unsubscribeMessages();
       if (unsubscribeMembers) unsubscribeMembers();
+      if (broadcastChannelRef.current) broadcastChannelRef.current.close();
     };
   }, [user, groupName, displayName, myMemberId]);
 
@@ -528,16 +546,21 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       timestamp: Date.now()
     };
 
-    // Optimistic UI push
+    // 1. Optimistic UI push
     setMessages(prev => {
       if (prev.some(m => m.id === msgId)) return prev;
       return [...prev, newMsg].sort((a, b) => a.timestamp - b.timestamp);
     });
     setInputText('');
 
+    // 2. Broadcast via BroadcastChannel for instant multi-tab sync
+    if (broadcastChannelRef.current) {
+      broadcastChannelRef.current.postMessage({ type: 'NEW_MSG', payload: newMsg });
+    }
+
     if (!user) return;
 
-    // Send to Firestore database immediately so everyone receives it
+    // 3. Save to Firestore database immediately so remote users receive it
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
@@ -809,7 +832,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                   }}
                   className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
                 >
-                  <Trash2 size={16} /> Delete for Everyone
+                  <Trash2 size5={16} /> Delete for Everyone
                 </button>
               )}
 
@@ -817,7 +840,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                 onClick={() => setActiveDeleteMsg(null)}
                 className="w-full bg-transparent hover:bg-slate-800 text-slate-400 py-2 rounded-xl text-xs font-medium cursor-pointer"
               >
-                Cancel code
+                Cancel
               </button>
             </div>
           </div>

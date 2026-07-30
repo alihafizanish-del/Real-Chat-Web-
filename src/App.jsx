@@ -1,9 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
-import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs, getDoc } from 'firebase/firestore';
-import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw, Code2, Heart, Lock, ShieldCheck, History, ArrowRight, KeyRound, MoreVertical, Trash2 } from 'lucide-react';
+import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDoc } from 'firebase/firestore';
+import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw, Code2, Heart, Lock, ShieldCheck, History, ArrowRight, KeyRound, MoreVertical, Trash2, EyeOff, Menu } from 'lucide-react';
 
+// --- Firebase Initialization ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
   ? JSON.parse(__firebase_config) 
   : {
@@ -29,37 +30,31 @@ const generateId = () => {
 export default function App() {
   const [user, setUser] = useState(null);
   const [authLoading, setAuthLoading] = useState(true);
-  const [authError, setAuthError] = useState(null);
   
   const [currentGroup, setCurrentGroup] = useState(null);
   const [displayName, setDisplayName] = useState('');
 
-  const initAuth = async () => {
-    setAuthLoading(true);
-    setAuthError(null);
-    try {
-      if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
-        await signInWithCustomToken(auth, __initial_auth_token);
-      } else {
-        await signInAnonymously(auth);
-      }
-    } catch (error) {
-      setUser({ uid: generateId() });
-      setAuthLoading(false);
-    }
-  };
-
   useEffect(() => {
-    initAuth();
-    const unsubscribe = onAuthStateChanged(auth, (u) => {
-      if (u) {
-        setUser(u);
-        setAuthError(null);
-      } else {
-        setUser({ uid: generateId() });
+    const initAuth = async () => {
+      setAuthLoading(true);
+      try {
+        if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
+          await signInWithCustomToken(auth, __initial_auth_token);
+        } else {
+          await signInAnonymously(auth);
+        }
+      } catch (error) {
+        console.error("Auth Initialization Error:", error);
       }
+    };
+
+    initAuth();
+
+    const unsubscribe = onAuthStateChanged(auth, (u) => {
+      setUser(u); // Set the actual Firebase user (or null)
       setAuthLoading(false);
     });
+
     return () => unsubscribe();
   }, []);
 
@@ -68,27 +63,7 @@ export default function App() {
       <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
         <div className="animate-pulse flex flex-col items-center">
           <MessageSquare className="w-12 h-12 text-indigo-500 mb-4 animate-bounce" />
-          <p className="text-slate-400 font-medium text-center">Connecting to server...</p>
-        </div>
-      </div>
-    );
-  }
-
-  if (authError) {
-    return (
-      <div className="min-h-screen bg-slate-950 flex items-center justify-center p-4">
-        <div className="max-w-md w-full bg-slate-900 border border-red-500/30 rounded-2xl p-6 text-center shadow-2xl space-y-4">
-          <div className="w-12 h-12 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto">
-            <AlertCircle size={28} />
-          </div>
-          <h2 className="text-xl font-bold text-white">Connection Error</h2>
-          <p className="text-sm text-slate-300 leading-relaxed bg-slate-950 p-4 rounded-xl border border-slate-800">{authError}</p>
-          <button
-            onClick={initAuth}
-            className="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-medium py-2.5 rounded-xl transition-colors flex items-center justify-center gap-2"
-          >
-            <RefreshCw size={16} /> Reconnect
-          </button>
+          <p className="text-slate-400 font-medium">Connecting...</p>
         </div>
       </div>
     );
@@ -116,6 +91,9 @@ export default function App() {
   );
 }
 
+// ==========================================
+// JOIN SCREEN (Home Page)
+// ==========================================
 function JoinScreen({ user, onJoin }) {
   const [name, setName] = useState('');
   const [group, setGroup] = useState('');
@@ -128,7 +106,6 @@ function JoinScreen({ user, onJoin }) {
   const [selectedOldGroup, setSelectedOldGroup] = useState(null);
   const [oldGroupPasscode, setOldGroupPasscode] = useState('');
   const [oldGroupError, setOldGroupError] = useState('');
-  const [groupToDelete, setGroupToDelete] = useState(null);
 
   const LOCAL_STORAGE_KEY = 'whisper_joined_groups_history';
 
@@ -142,35 +119,28 @@ function JoinScreen({ user, onJoin }) {
   };
 
   useEffect(() => {
-    const localList = getLocalHistory();
-    setOldGroups(localList);
+    setOldGroups(getLocalHistory());
 
-    if (!user) return;
-
+    if (!user) return; // Prevent querying if not authenticated
+    
     try {
       const historyRef = collection(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata');
       const unsubscribe = onSnapshot(historyRef, (snapshot) => {
         const groupsList = [];
-        snapshot.forEach((d) => {
-          groupsList.push(d.data());
-        });
+        snapshot.forEach((d) => groupsList.push(d.data()));
         
         const currentLocal = getLocalHistory();
         const map = new Map();
         currentLocal.forEach(g => map.set(g.groupName, g));
         groupsList.forEach(g => {
-          if (!map.has(g.groupName)) {
-            map.set(g.groupName, g);
-          } else {
-            map.set(g.groupName, { ...map.get(g.groupName), ...g });
-          }
+          if (!map.has(g.groupName)) map.set(g.groupName, g);
+          else map.set(g.groupName, { ...map.get(g.groupName), ...g });
         });
 
-        const merged = Array.from(map.values());
-        merged.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
+        const merged = Array.from(map.values()).sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
         setOldGroups(merged);
       }, (err) => console.warn("Fetch notice:", err));
-
+      
       return () => unsubscribe();
     } catch (e) {
       console.warn("History notice:", e);
@@ -181,11 +151,9 @@ function JoinScreen({ user, onJoin }) {
     try {
       let list = getLocalHistory();
       const index = list.findIndex(g => g.groupName === groupData.groupName);
-      if (index >= 0) {
-        list[index] = { ...list[index], ...groupData };
-      } else {
-        list.unshift(groupData);
-      }
+      if (index >= 0) list[index] = { ...list[index], ...groupData };
+      else list.unshift(groupData);
+      
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
       setOldGroups(list);
     } catch (e) {}
@@ -193,67 +161,61 @@ function JoinScreen({ user, onJoin }) {
 
   const handleDeleteOldGroup = async (groupName) => {
     try {
-      const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', groupName);
-      await deleteDoc(groupMetaRef);
-
-      let list = getLocalHistory();
-      list = list.filter(g => g.groupName !== groupName);
+      if (user) {
+        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', groupName));
+      }
+      let list = getLocalHistory().filter(g => g.groupName !== groupName);
       localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
       setOldGroups(list);
-      setGroupToDelete(null);
-    } catch (err) {}
+    } catch (err) {
+      console.warn("Delete old group error:", err);
+    }
   };
 
   const handleJoin = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return setError('Please enter your name.');
-    if (!group.trim()) return setError('Please enter a group name.');
-    if (!secretPasscode.trim()) return setError('Please enter your passcode.');
-
+    if (!name.trim() || !group.trim() || !secretPasscode.trim()) {
+      return setError('Please fill all fields completely.');
+    }
+    
     const normalizedGroup = group.trim().toLowerCase().replace(/[^a-z0-9_-]/g, '_');
     setIsSubmitting(true);
     setError('');
 
     try {
-      const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
-      const groupMetaSnap = await getDoc(groupMetaRef);
+      if (user) {
+        const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
+        const groupMetaSnap = await getDoc(groupMetaRef);
 
-      if (groupMetaSnap.exists()) {
-        const existingMeta = groupMetaSnap.data();
-        const currentMembers = existingMeta.members || [];
-        if (!currentMembers.includes(name.trim())) {
+        if (groupMetaSnap.exists()) {
+          const existingMeta = groupMetaSnap.data();
+          const currentMembers = existingMeta.members || [];
+          if (!currentMembers.includes(name.trim())) {
+            await setDoc(groupMetaRef, { members: [...currentMembers, name.trim()] }, { merge: true });
+          }
+        } else {
           await setDoc(groupMetaRef, {
-            ...existingMeta,
-            members: [...currentMembers, name.trim()]
-          }, { merge: true });
+            groupName: normalizedGroup,
+            createdBy: name.trim(),
+            createdAt: Date.now(),
+            members: [name.trim()]
+          });
         }
-      } else {
-        await setDoc(groupMetaRef, {
-          groupName: normalizedGroup,
-          createdBy: name.trim(),
-          createdAt: Date.now(),
-          members: [name.trim()]
-        });
       }
 
-      saveToLocalHistory({
-        groupName: normalizedGroup,
-        displayName: name.trim(),
-        passcode: secretPasscode.trim()
-      });
-
+      saveToLocalHistory({ groupName: normalizedGroup, displayName: name.trim(), passcode: secretPasscode.trim() });
       setIsSubmitting(false);
       onJoin(normalizedGroup, name.trim());
     } catch (err) {
       setIsSubmitting(false);
-      onJoin(normalizedGroup, name.trim());
+      onJoin(normalizedGroup, name.trim()); // Fallback join using local broadcast
     }
   };
 
   const handleOldGroupUnlock = async (e) => {
     e.preventDefault();
-    if (!name.trim()) return setOldGroupError('Please enter your name first!');
-    if (!oldGroupPasscode.trim()) return setOldGroupError('Please enter passcode.');
+    if (!name.trim()) return setOldGroupError('Enter your Display Name in the main form first!');
+    if (!oldGroupPasscode.trim()) return setOldGroupError('Enter passcode!');
 
     const foundGroup = oldGroups.find(g => g.groupName === selectedOldGroup.groupName);
     if (foundGroup && foundGroup.passcode && foundGroup.passcode !== oldGroupPasscode.trim()) {
@@ -262,24 +224,22 @@ function JoinScreen({ user, onJoin }) {
 
     const normalizedGroup = selectedOldGroup.groupName;
     try {
-      const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
-      const groupMetaSnap = await getDoc(groupMetaRef);
-      if (groupMetaSnap.exists()) {
-        const existingMeta = groupMetaSnap.data();
-        const currentMembers = existingMeta.members || [];
-        if (!currentMembers.includes(name.trim())) {
-          await setDoc(groupMetaRef, {
-            ...existingMeta,
-            members: [...currentMembers, name.trim()]
-          }, { merge: true });
+      if (user) {
+        const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
+        const groupMetaSnap = await getDoc(groupMetaRef);
+        if (groupMetaSnap.exists()) {
+          const existingMeta = groupMetaSnap.data();
+          if (!(existingMeta.members || []).includes(name.trim())) {
+            await setDoc(groupMetaRef, { members: [...(existingMeta.members || []), name.trim()] }, { merge: true });
+          }
         }
       }
-
+      saveToLocalHistory({ groupName: normalizedGroup, displayName: name.trim(), passcode: oldGroupPasscode.trim() });
       setSelectedOldGroup(null);
       setShowOldChatsDrawer(false);
       onJoin(normalizedGroup, name.trim());
     } catch (err) {
-      onJoin(normalizedGroup, name.trim());
+      onJoin(normalizedGroup, name.trim()); // Fallback
     }
   };
 
@@ -297,7 +257,6 @@ function JoinScreen({ user, onJoin }) {
         >
           <History size={18} />
           <span className="text-xs font-semibold">Old Chats</span>
-          <MoreVertical size={18} className="text-slate-400" />
         </button>
       </div>
 
@@ -397,24 +356,32 @@ function JoinScreen({ user, onJoin }) {
                     <div key={g.groupName} className="p-4 bg-slate-950/80 border border-slate-800 rounded-2xl flex items-center justify-between shadow-md">
                       <div 
                         onClick={() => {
-                          if (!name.trim()) return setError('Please enter your name first!');
+                          if (!name.trim()) return setError('Please enter your Name in the main form first!');
                           setSelectedOldGroup(g);
                         }}
                         className="space-y-1 min-w-0 pr-2 flex-1 cursor-pointer"
                       >
                         <span className="font-bold text-white text-base">#{g.groupName}</span>
-                        <p className="text-xs text-slate-400">Members: {g.members?.join(', ') || 'Active'}</p>
+                        <p className="text-xs text-slate-400">Total Members: {g.members?.length || 1}</p>
                       </div>
 
-                      <button
-                        onClick={() => {
-                          if (!name.trim()) return setError('Please enter your name first!');
-                          setSelectedOldGroup(g);
-                        }}
-                        className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-600 hover:text-white flex items-center justify-center cursor-pointer"
-                      >
-                        <KeyRound size={18} />
-                      </button>
+                      <div className="flex gap-2">
+                        <button
+                          onClick={() => {
+                            if (!name.trim()) return setError('Please enter your Name in the main form first!');
+                            setSelectedOldGroup(g);
+                          }}
+                          className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-600 hover:text-white flex items-center justify-center cursor-pointer"
+                        >
+                          <KeyRound size={18} />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteOldGroup(g.groupName)}
+                          className="w-9 h-9 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-600 hover:text-white flex items-center justify-center cursor-pointer"
+                        >
+                          <Trash2 size={16} />
+                        </button>
+                      </div>
                     </div>
                   ))}
                 </div>
@@ -450,15 +417,22 @@ function JoinScreen({ user, onJoin }) {
   );
 }
 
+// ==========================================
+// CHAT ROOM COMPONENT
+// ==========================================
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
   const [members, setMembers] = useState([]);
   const [inputText, setInputText] = useState('');
   const [isRecording, setIsRecording] = useState(false);
-  const [errorToast, setErrorToast] = useState(null);
+  const [showMembersMobile, setShowMembersMobile] = useState(false);
+  
+  const [activeDeleteMsg, setActiveDeleteMsg] = useState(null);
+  const [deletedForMeIds, setDeletedForMeIds] = useState([]);
 
   const myMemberIdRef = useRef(generateId());
   const myMemberId = myMemberIdRef.current;
+  
   const messagesEndRef = useRef(null);
   const mediaRecorderRef = useRef(null);
   const audioChunksRef = useRef([]);
@@ -466,15 +440,15 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const membersColName = `members_${groupName}`;
   const messagesColName = `messages_${groupName}`;
 
+  // Name colors based on string hash
   const nameColors = ['text-emerald-400', 'text-amber-400', 'text-sky-400', 'text-pink-400', 'text-purple-400', 'text-orange-400'];
   const getNameColor = (name) => {
     let hash = 0;
-    for (let i = 0; i < name.length; i++) {
-      hash = name.charCodeAt(i) + ((hash << 5) - hash);
-    }
+    for (let i = 0; i < name.length; i++) hash = name.charCodeAt(i) + ((hash << 5) - hash);
     return nameColors[Math.abs(hash) % nameColors.length];
   };
 
+  // --- Real-time Firebase Sync ---
   useEffect(() => {
     if (!user) return;
 
@@ -485,68 +459,71 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       lastSeen: Date.now()
     };
 
-    const heartbeatInterval = setInterval(() => {
-      const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
-      setDoc(memberDocRef, { ...selfMember, lastSeen: Date.now() }, { merge: true }).catch(() => {});
-    }, 4000);
-
     let unsubscribeMessages;
     let unsubscribeMembers;
+    let heartbeatInterval;
 
     const setupFirestore = async () => {
       try {
+        // Register self as a member
         const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
         await setDoc(memberDocRef, selfMember);
 
+        // Heartbeat to keep status "Online"
+        heartbeatInterval = setInterval(() => {
+          setDoc(memberDocRef, { lastSeen: Date.now() }, { merge: true }).catch(() => {});
+        }, 5000);
+
+        // Listen for Members
         const membersRef = collection(db, 'artifacts', appId, 'public', 'data', membersColName);
         unsubscribeMembers = onSnapshot(membersRef, (snapshot) => {
           const memsMap = new Map();
-          snapshot.forEach((d) => {
-            const data = d.data();
-            memsMap.set(data.id, data);
-          });
+          snapshot.forEach((d) => memsMap.set(d.id, d.data()));
           setMembers(Array.from(memsMap.values()));
         }, (err) => console.warn("Members error:", err));
 
+        // Listen for Messages
         const messagesRef = collection(db, 'artifacts', appId, 'public', 'data', messagesColName);
         unsubscribeMessages = onSnapshot(messagesRef, (snapshot) => {
-          const msgs = [];
-          snapshot.forEach((d) => {
-            msgs.push(d.data());
+          setMessages(prev => {
+             const map = new Map(prev.map(m => [m.id, m]));
+             snapshot.forEach(d => map.set(d.id, d.data()));
+             return Array.from(map.values()).sort((a, b) => a.timestamp - b.timestamp);
           });
-          msgs.sort((a, b) => a.timestamp - b.timestamp);
-          setMessages(msgs);
         }, (err) => console.warn("Messages error:", err));
       } catch (err) {
-        console.error("Firestore error:", err);
+        console.error("Firestore setup error:", err);
       }
     };
 
     setupFirestore();
 
     return () => {
-      clearInterval(heartbeatInterval);
+      if (heartbeatInterval) clearInterval(heartbeatInterval);
       if (unsubscribeMessages) unsubscribeMessages();
       if (unsubscribeMembers) unsubscribeMembers();
     };
   }, [user, groupName, displayName, myMemberId]);
 
+  // Auto-scroll to bottom when new messages arrive
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, deletedForMeIds]);
 
+  // --- Actions ---
   const handleLeaveGroup = async () => {
     try {
-      const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
-      await deleteDoc(memberDocRef);
+      if (user) {
+        const memberDocRef = doc(db, 'artifacts', appId, 'public', 'data', membersColName, myMemberId);
+        await deleteDoc(memberDocRef); // Remove from online members
+      }
     } catch (err) {}
-    onLeave();
+    onLeave(); // Return to home screen
   };
 
   const sendMessage = async (text = null, audioBase64 = null) => {
     if (!text && !audioBase64) return;
-    if (!user) return;
-
+    
     const msgId = generateId();
     const newMsg = {
       id: msgId,
@@ -557,13 +534,21 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       timestamp: Date.now()
     };
 
+    // 1. Optimistic UI update
+    setMessages(prev => {
+      if(prev.some(m => m.id === msgId)) return prev;
+      return [...prev, newMsg].sort((a, b) => a.timestamp - b.timestamp);
+    });
     setInputText('');
 
+    if (!user) return;
+
+    // 2. Save to Firestore
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
     } catch (err) {
-      showError("Failed to send message.");
+      console.error("Failed to send to DB:", err);
     }
   };
 
@@ -583,7 +568,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
         const reader = new FileReader();
         reader.readAsDataURL(audioBlob);
         reader.onloadend = () => {
-          sendMessage(null, reader.result);
+          sendMessage(null, reader.result); // Send audio as base64
         };
         stream.getTracks().forEach(track => track.stop());
       };
@@ -591,7 +576,7 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       mediaRecorder.start();
       setIsRecording(true);
     } catch (err) {
-      showError("Microphone access denied.");
+      alert("Microphone permission is required!");
     }
   };
 
@@ -602,70 +587,81 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     }
   };
 
-  const showError = (msg) => {
-    setErrorToast(msg);
-    setTimeout(() => setErrorToast(null), 4000);
-  };
-
   const isMemberOnline = (member) => {
     if (!member.lastSeen) return true;
-    return (Date.now() - member.lastSeen) < 12000;
+    return (Date.now() - member.lastSeen) < 15000; // 15 seconds threshold
   };
 
   const onlineCount = members.filter(isMemberOnline).length;
+  const visibleMessages = messages.filter(m => !deletedForMeIds.includes(m.id));
 
   return (
-    <div className="flex flex-col h-screen bg-slate-950 relative overflow-hidden">
-      {errorToast && (
-        <div className="absolute top-4 left-1/2 -translate-x-1/2 z-50 bg-red-500/90 text-white px-4 py-2 rounded-full shadow-lg flex items-center gap-2">
-          <AlertCircle size={18} />
-          <span className="text-sm font-medium">{errorToast}</span>
-        </div>
-      )}
-
-      <header className="bg-slate-900 border-b border-slate-800 p-4 flex items-center justify-between z-10 shrink-0">
-        <div className="flex items-center gap-3">
-          <div>
-            <div className="flex items-center gap-2">
-              <h2 className="font-bold text-white leading-tight">#{groupName}</h2>
-              <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-medium border border-indigo-500/20">
-                by Anish
-              </span>
-            </div>
-            <p className="text-xs text-green-400 flex items-center gap-1 mt-0.5">
-              <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
-              {onlineCount} online ({members.length} total members)
-            </p>
-          </div>
-        </div>
+    <div className="flex h-screen bg-slate-950 relative overflow-hidden">
+      
+      {/* LEFT / MAIN SIDE: Chat Area */}
+      <div className="flex-1 flex flex-col min-w-0 bg-[#0f172a] h-full">
         
-        <button
-          onClick={handleLeaveGroup}
-          className="flex items-center gap-2 px-3 py-2 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm font-medium border border-red-500/20 cursor-pointer"
-        >
-          <LogOut size={16} />
-          <span>Leave Group</span>
-        </button>
-      </header>
-
-      <div className="flex-1 flex overflow-hidden">
-        <div className="flex-1 flex flex-col min-w-0 bg-[#0f172a]">
-          <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
-                <MessageSquare size={48} className="opacity-20" />
-                <p className="text-sm text-center">No messages yet. Start the conversation!</p>
+        {/* HEADER */}
+        <header className="bg-slate-900 border-b border-slate-800 p-4 flex items-center justify-between shrink-0">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 rounded-xl bg-indigo-500/20 text-indigo-400 flex items-center justify-center">
+              <Users size={20} />
+            </div>
+            <div>
+              <div className="flex items-center gap-2">
+                <h2 className="font-bold text-white text-lg leading-tight">#{groupName}</h2>
+                <span className="text-[10px] px-2 py-0.5 rounded-full bg-indigo-500/10 text-indigo-400 font-medium">by Anish</span>
               </div>
-            ) : (
-              messages.map((msg) => {
-                const isMe = msg.senderId === myMemberId;
-                return (
-                  <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'}`}>
-                    <span className={`text-xs font-semibold mb-1 px-1 ${isMe ? 'text-indigo-400' : getNameColor(msg.senderName)}`}>
-                      {msg.senderName} {isMe && '(You)'}
-                    </span>
-                    <div className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 shadow-md ${isMe ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700'}`}>
-                      {msg.text && <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>}
+              <p className="text-xs text-slate-400 flex items-center gap-1.5 mt-0.5">
+                <span className="w-2 h-2 rounded-full bg-green-500 animate-pulse"></span>
+                {onlineCount} Online | {members.length} Total
+              </p>
+            </div>
+          </div>
+          
+          <div className="flex items-center gap-2 sm:gap-3">
+            <button 
+              onClick={() => setShowMembersMobile(true)}
+              className="md:hidden p-2 text-slate-400 hover:text-white bg-slate-800 rounded-lg cursor-pointer"
+            >
+              <Menu size={20} />
+            </button>
+            <button
+              onClick={handleLeaveGroup}
+              className="flex items-center gap-2 px-3 py-2.5 bg-red-500/10 hover:bg-red-500/20 text-red-400 rounded-lg text-sm font-medium border border-red-500/20 cursor-pointer"
+            >
+              <LogOut size={16} />
+              <span className="hidden sm:inline">Leave Group</span>
+            </button>
+          </div>
+        </header>
+
+        {/* MESSAGES LIST */}
+        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+          {visibleMessages.length === 0 ? (
+            <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
+              <MessageSquare size={48} className="opacity-20" />
+              <p className="text-sm">No messages yet. Start the conversation!</p>
+            </div>
+          ) : (
+            visibleMessages.map((msg) => {
+              const isMe = msg.senderId === myMemberId;
+              
+              return (
+                <div key={msg.id} className={`flex flex-col w-full ${isMe ? 'items-end' : 'items-start'}`}>
+                  
+                  {/* Sender Name */}
+                  <span className={`text-xs font-semibold mb-1 px-1 ${isMe ? 'text-indigo-400' : getNameColor(msg.senderName)}`}>
+                    {msg.senderName} {isMe && '(You)'}
+                  </span>
+
+                  {/* Message Bubble + Delete Button Container */}
+                  <div className={`relative flex items-center gap-2 max-w-[85%] sm:max-w-[70%] group ${isMe ? 'flex-row-reverse' : 'flex-row'}`}>
+                    
+                    {/* Message Bubble */}
+                    <div className={`rounded-2xl px-4 py-2.5 shadow-md ${isMe ? 'bg-indigo-600 text-white rounded-tr-sm' : 'bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700'}`}>
+                      {msg.text && <p className="text-[15px] leading-relaxed break-words whitespace-pre-wrap">{msg.text}</p>}
+                      
                       {msg.audioData && (
                         <div className="flex items-center gap-2 py-1">
                           <Volume2 size={20} className={isMe ? 'text-indigo-200' : 'text-slate-400'} />
@@ -673,81 +669,175 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
                         </div>
                       )}
                     </div>
-                  </div>
-                );
-              })
-            )}
-            <div ref={messagesEndRef} />
-          </div>
 
-          <div className="p-3 sm:p-4 bg-slate-900 border-t border-slate-800 shrink-0">
-            <form 
-              onSubmit={(e) => { e.preventDefault(); if (inputText.trim()) sendMessage(inputText); }}
-              className="flex items-end gap-2 max-w-4xl mx-auto"
-            >
-              <input
-                type="text"
-                value={inputText}
-                onChange={(e) => { if (e.target.value.length <= 300) setInputText(e.target.value); }}
-                placeholder={isRecording ? "Recording voice note..." : "Type a message..."}
-                disabled={isRecording}
-                className="flex-1 bg-slate-950 border border-slate-700 text-white rounded-2xl px-4 py-3.5 focus:outline-none focus:border-indigo-500"
-              />
+                    {/* Delete Option Icon (Shows on hover/tap) */}
+                    <button
+                      onClick={() => setActiveDeleteMsg(msg)}
+                      className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-slate-500 hover:text-red-400 bg-slate-900/80 rounded-full border border-slate-800 shrink-0 cursor-pointer"
+                      title="Options"
+                    >
+                      <MoreVertical size={16} />
+                    </button>
 
-              {inputText.trim() ? (
-                <button type="submit" className="h-[52px] w-[52px] bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl flex items-center justify-center cursor-pointer shadow-lg shadow-indigo-500/25">
-                  <Send size={20} />
-                </button>
-              ) : (
-                <button
-                  type="button"
-                  onMouseDown={startRecording}
-                  onMouseUp={stopRecording}
-                  onMouseLeave={stopRecording}
-                  onTouchStart={startRecording}
-                  onTouchEnd={stopRecording}
-                  className={`h-[52px] w-[52px] rounded-2xl flex items-center justify-center cursor-pointer transition-all ${
-                    isRecording ? 'bg-red-500 text-white animate-pulse' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
-                  }`}
-                  title="Hold to record voice message"
-                >
-                  {isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}
-                </button>
-              )}
-            </form>
-          </div>
-        </div>
-
-        <div className="w-64 bg-slate-900 border-l border-slate-800 flex flex-col hidden md:flex">
-          <div className="p-4 border-b border-slate-800 font-semibold text-slate-200">
-            Group Members ({members.length})
-          </div>
-          <div className="flex-1 overflow-y-auto p-2 space-y-1">
-            {members.map(member => {
-              const online = isMemberOnline(member);
-              const isMe = member.id === myMemberId;
-              return (
-                <div key={member.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800/50">
-                  <div className="relative">
-                    <div className="w-8 h-8 rounded-full bg-indigo-950 text-indigo-300 font-medium flex items-center justify-center">
-                      {member.name.charAt(0)}
-                    </div>
-                    {online ? (
-                      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-green-500 border border-slate-900 rounded-full" title="Online"></span>
-                    ) : (
-                      <span className="absolute bottom-0 right-0 w-2.5 h-2.5 bg-slate-600 border border-slate-900 rounded-full" title="Offline"></span>
-                    )}
-                  </div>
-                  <div className="min-w-0 flex-1">
-                    <p className="text-sm text-slate-200 truncate">{member.name} {isMe && '(You)'}</p>
-                    <p className="text-[10px] text-slate-400">{online ? 'Online' : 'Offline'}</p>
                   </div>
                 </div>
               );
-            })}
-          </div>
+            })
+          )}
+          <div ref={messagesEndRef} />
+        </div>
+
+        {/* INPUT AREA */}
+        <div className="p-3 sm:p-4 bg-slate-900 border-t border-slate-800 shrink-0">
+          <form 
+            onSubmit={(e) => { e.preventDefault(); if (inputText.trim()) sendMessage(inputText); }}
+            className="flex items-end gap-2 max-w-4xl mx-auto"
+          >
+            <input
+              type="text"
+              value={inputText}
+              onChange={(e) => { if (e.target.value.length <= 500) setInputText(e.target.value); }}
+              placeholder={isRecording ? "Recording voice message..." : "Type your message here..."}
+              disabled={isRecording}
+              className="flex-1 bg-slate-950 border border-slate-700 text-white rounded-2xl px-5 py-3.5 focus:outline-none focus:border-indigo-500"
+            />
+
+            {inputText.trim() ? (
+              <button type="submit" className="h-[52px] w-[52px] bg-indigo-600 hover:bg-indigo-500 text-white rounded-2xl flex items-center justify-center cursor-pointer shadow-lg shadow-indigo-500/25 shrink-0">
+                <Send size={20} />
+              </button>
+            ) : (
+              <button
+                type="button"
+                onMouseDown={startRecording}
+                onMouseUp={stopRecording}
+                onMouseLeave={stopRecording}
+                onTouchStart={startRecording}
+                onTouchEnd={stopRecording}
+                className={`h-[52px] w-[52px] rounded-2xl flex items-center justify-center cursor-pointer transition-all shrink-0 ${
+                  isRecording ? 'bg-red-500 text-white animate-pulse shadow-lg shadow-red-500/40' : 'bg-slate-800 hover:bg-slate-700 text-slate-300 border border-slate-700'
+                }`}
+                title="Hold to record voice message"
+              >
+                {isRecording ? <Square size={20} fill="currentColor" /> : <Mic size={22} />}
+              </button>
+            )}
+          </form>
         </div>
       </div>
+
+      {/* RIGHT SIDE: Members List (Desktop) */}
+      <div className="w-64 bg-slate-900 border-l border-slate-800 flex flex-col hidden md:flex shrink-0 h-full">
+        <div className="p-4 border-b border-slate-800 flex items-center gap-2 text-slate-200">
+          <Users size={18} className="text-slate-400" />
+          <h3 className="font-semibold text-sm">Group Members ({members.length})</h3>
+        </div>
+        <div className="flex-1 overflow-y-auto p-2 space-y-1">
+          {members.map(member => {
+            const online = isMemberOnline(member);
+            const isMe = member.id === myMemberId;
+            return (
+              <div key={member.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800/50 transition-colors">
+                <div className="relative">
+                  <div className="w-9 h-9 rounded-full bg-indigo-950 text-indigo-300 font-medium flex items-center justify-center border border-indigo-800/50">
+                    {member.name.charAt(0).toUpperCase()}
+                  </div>
+                  {online ? (
+                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-green-500 border-2 border-slate-900 rounded-full"></span>
+                  ) : (
+                    <span className="absolute bottom-0 right-0 w-3 h-3 bg-slate-600 border-2 border-slate-900 rounded-full"></span>
+                  )}
+                </div>
+                <div className="min-w-0 flex-1">
+                  <p className="text-sm font-medium text-slate-200 truncate">{member.name} {isMe && <span className="text-xs text-indigo-400 ml-1">(You)</span>}</p>
+                  <p className="text-[10px] text-slate-500">{online ? <span className="text-green-400">Online</span> : 'Offline'}</p>
+                </div>
+              </div>
+            );
+          })}
+        </div>
+      </div>
+
+      {/* MOBILE MEMBERS DRAWER */}
+      {showMembersMobile && (
+        <div className="fixed inset-0 z-50 flex justify-end md:hidden">
+          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" onClick={() => setShowMembersMobile(false)}></div>
+          <div className="relative w-64 bg-slate-900 h-full shadow-2xl flex flex-col animate-in slide-in-from-right-full duration-300">
+            <div className="p-4 border-b border-slate-800 flex items-center justify-between text-slate-200">
+              <h3 className="font-semibold text-sm flex items-center gap-2"><Users size={18}/> Members ({members.length})</h3>
+              <button onClick={() => setShowMembersMobile(false)} className="p-1.5 bg-slate-800 rounded-lg text-slate-400"><X size={16}/></button>
+            </div>
+            <div className="flex-1 overflow-y-auto p-2 space-y-1">
+              {members.map(member => {
+                const online = isMemberOnline(member);
+                const isMe = member.id === myMemberId;
+                return (
+                  <div key={member.id} className="flex items-center gap-3 p-3 rounded-xl hover:bg-slate-800/50">
+                    <div className="relative">
+                      <div className="w-9 h-9 rounded-full bg-indigo-950 text-indigo-300 font-medium flex items-center justify-center">
+                        {member.name.charAt(0).toUpperCase()}
+                      </div>
+                      <span className={`absolute bottom-0 right-0 w-3 h-3 border-2 border-slate-900 rounded-full ${online ? 'bg-green-500' : 'bg-slate-600'}`}></span>
+                    </div>
+                    <div className="min-w-0 flex-1">
+                      <p className="text-sm font-medium text-slate-200 truncate">{member.name} {isMe && <span className="text-xs text-indigo-400 ml-1">(You)</span>}</p>
+                      <p className="text-[10px] text-slate-500">{online ? <span className="text-green-400">Online</span> : 'Offline'}</p>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* MESSAGE DELETE MODAL */}
+      {activeDeleteMsg && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="max-w-sm w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-center">
+            <div className="w-12 h-12 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto mb-2">
+              <Trash2 size={24} />
+            </div>
+            <h3 className="font-bold text-white text-lg">Delete Message</h3>
+            
+            <div className="space-y-2 pt-2">
+              <button
+                onClick={() => {
+                  setDeletedForMeIds(prev => [...prev, activeDeleteMsg.id]);
+                  setActiveDeleteMsg(null);
+                }}
+                className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
+              >
+                <EyeOff size={16} /> Delete for Me
+              </button>
+
+              {activeDeleteMsg.senderId === myMemberId && (
+                <button
+                  onClick={async () => {
+                    try {
+                      if (user) {
+                        await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', messagesColName, activeDeleteMsg.id));
+                      }
+                    } catch(e){}
+                    setActiveDeleteMsg(null);
+                  }}
+                  className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <Trash2 size={16} /> Delete for Everyone
+                </button>
+              )}
+
+              <button
+                onClick={() => setActiveDeleteMsg(null)}
+                className="w-full bg-transparent hover:bg-slate-800 text-slate-400 py-2 rounded-xl text-xs font-medium cursor-pointer"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
     </div>
   );
 }

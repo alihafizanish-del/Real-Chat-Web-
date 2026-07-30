@@ -2,7 +2,7 @@ import React, { useState, useEffect, useRef } from 'react';
 import { initializeApp } from 'firebase/app';
 import { getAuth, signInAnonymously, signInWithCustomToken, onAuthStateChanged } from 'firebase/auth';
 import { getFirestore, collection, doc, setDoc, deleteDoc, onSnapshot, getDocs, getDoc } from 'firebase/firestore';
-import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw, Code2, Heart, Lock, ShieldCheck, History, ArrowRight, KeyRound, MoreVertical, Menu } from 'lucide-react';
+import { Send, Mic, Square, Users, LogOut, MessageSquare, AlertCircle, Volume2, X, RefreshCw, Code2, Heart, Lock, ShieldCheck, History, ArrowRight, KeyRound, MoreVertical, Menu, Trash2, EyeOff } from 'lucide-react';
 
 // --- Firebase Initialization ---
 const firebaseConfig = typeof __firebase_config !== 'undefined' 
@@ -50,7 +50,7 @@ export default function App() {
       }
     } catch (error) {
       console.error("Auth Error:", error);
-      setAuthError("فائر بیس سرور سے کنیکٹ ہونے میں مسئلہ آیا۔ براہ کرم صفحہ ریفریش کریں۔");
+      setAuthError("Failed to connect to authentication server. Please refresh the page.");
       setAuthLoading(false);
     }
   };
@@ -137,22 +137,22 @@ function JoinScreen({ user, onJoin }) {
   const [selectedOldGroup, setSelectedOldGroup] = useState(null);
   const [oldGroupPasscode, setOldGroupPasscode] = useState('');
   const [oldGroupError, setOldGroupError] = useState('');
+  
+  // Group deletion confirmation modal state
+  const [groupToDelete, setGroupToDelete] = useState(null);
 
-  // Local device storage key for joined groups
   const LOCAL_STORAGE_KEY = 'whisper_joined_groups_history';
 
   // Load Old Groups History
   useEffect(() => {
     if (!user) return;
 
-    // Load from Firestore all_groups_metadata
     const historyRef = collection(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata');
     const unsubscribe = onSnapshot(historyRef, (snapshot) => {
       const groupsList = [];
       snapshot.forEach((d) => {
         groupsList.push(d.data());
       });
-      // Sort by creation or update date
       groupsList.sort((a, b) => (b.createdAt || 0) - (a.createdAt || 0));
       setOldGroups(groupsList);
     }, (err) => console.warn("Old groups history fetch notice:", err));
@@ -160,7 +160,6 @@ function JoinScreen({ user, onJoin }) {
     return () => unsubscribe();
   }, [user]);
 
-  // Helper to store group history locally on device
   const saveToLocalHistory = (groupData) => {
     try {
       const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
@@ -177,7 +176,28 @@ function JoinScreen({ user, onJoin }) {
     }
   };
 
-  // Handle Form Submit for New or Existing Group (Personal Passcode Logic)
+  // Delete an entire old group chat history
+  const handleDeleteOldGroup = async (groupName) => {
+    try {
+      // 1. Delete group metadata
+      const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', groupName);
+      await deleteDoc(groupMetaRef);
+
+      // 2. Remove from local storage history
+      const saved = localStorage.getItem(LOCAL_STORAGE_KEY);
+      if (saved) {
+        let list = JSON.parse(saved);
+        list = list.filter(g => g.groupName !== groupName);
+        localStorage.setItem(LOCAL_STORAGE_KEY, JSON.stringify(list));
+      }
+
+      setGroupToDelete(null);
+    } catch (err) {
+      console.error("Error deleting group:", err);
+    }
+  };
+
+  // Handle Form Submit for Join/Create
   const handleJoin = async (e) => {
     e.preventDefault();
     if (!name.trim()) return setError('Please enter your display name.');
@@ -191,21 +211,18 @@ function JoinScreen({ user, onJoin }) {
     setError('');
 
     try {
-      // Personal User Credential Key in Firestore: {groupName}_{userName}
       const credentialDocId = `${normalizedGroup}_${normalizedName}`;
       const credDocRef = doc(db, 'artifacts', appId, 'public', 'data', 'user_credentials', credentialDocId);
       const credSnap = await getDoc(credDocRef);
 
       if (credSnap.exists()) {
         const existingCred = credSnap.data();
-        // Check if entered passcode matches THIS USER'S previously set passcode
         if (existingCred.passcode !== secretPasscode.trim()) {
           setError('Your Passcode is Incorrect!');
           setIsSubmitting(false);
           return;
         }
       } else {
-        // Save new personal passcode for this specific user in this group
         await setDoc(credDocRef, {
           groupName: normalizedGroup,
           displayName: name.trim(),
@@ -214,7 +231,6 @@ function JoinScreen({ user, onJoin }) {
         });
       }
 
-      // Update Group Metadata (all members list)
       const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
       const groupMetaSnap = await getDoc(groupMetaRef);
 
@@ -237,7 +253,6 @@ function JoinScreen({ user, onJoin }) {
         });
       }
 
-      // Save to local device history
       saveToLocalHistory({
         groupName: normalizedGroup,
         displayName: name.trim(),
@@ -254,7 +269,7 @@ function JoinScreen({ user, onJoin }) {
     }
   };
 
-  // Quick Unlock & Rejoin Old Group from History List
+  // Quick Unlock Old Group
   const handleOldGroupUnlock = async (e) => {
     e.preventDefault();
     if (!name.trim()) return setOldGroupError('Please enter Your Display Name above first!');
@@ -275,7 +290,6 @@ function JoinScreen({ user, onJoin }) {
           return;
         }
       } else {
-        // First time this specific user name joins this existing group
         await setDoc(credDocRef, {
           groupName: normalizedGroup,
           displayName: name.trim(),
@@ -284,7 +298,6 @@ function JoinScreen({ user, onJoin }) {
         });
       }
 
-      // Update Group Metadata
       const groupMetaRef = doc(db, 'artifacts', appId, 'public', 'data', 'all_groups_metadata', normalizedGroup);
       const groupMetaSnap = await getDoc(groupMetaRef);
 
@@ -299,7 +312,6 @@ function JoinScreen({ user, onJoin }) {
         }
       }
 
-      // Save locally
       saveToLocalHistory({
         groupName: normalizedGroup,
         displayName: name.trim(),
@@ -427,7 +439,7 @@ function JoinScreen({ user, onJoin }) {
         </div>
       </div>
 
-      {/* --- YOUR OLD GROUP CHATS DRAWER (Triggered by 3-Dots Menu or Bottom Card) --- */}
+      {/* --- YOUR OLD GROUP CHATS DRAWER --- */}
       {showOldChatsDrawer && (
         <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex justify-end animate-in fade-in duration-200">
           <div className="w-full max-w-md bg-slate-900 border-l border-slate-800 h-full p-6 flex flex-col justify-between shadow-2xl overflow-hidden">
@@ -447,7 +459,7 @@ function JoinScreen({ user, onJoin }) {
               </div>
 
               <p className="text-xs text-slate-400 leading-relaxed">
-                Choose any group to rejoin. You must enter <span className="text-indigo-300 font-semibold">your personal secret passcode</span> to open old chat messages.
+                Choose any group to rejoin. You can also delete any group chat history from the list.
               </p>
 
               {oldGroups.length === 0 ? (
@@ -461,20 +473,22 @@ function JoinScreen({ user, onJoin }) {
                   {oldGroups.map((g) => (
                     <div 
                       key={g.groupName}
-                      onClick={() => {
-                        if (!name.trim()) {
-                          setError('Please enter Your Display Name in the form above first!');
-                          setShowOldChatsDrawer(false);
-                          window.scrollTo({ top: 0, behavior: 'smooth' });
-                          return;
-                        }
-                        setSelectedOldGroup(g);
-                        setOldGroupPasscode('');
-                        setOldGroupError('');
-                      }}
-                      className="p-4 bg-slate-950/80 hover:bg-indigo-950/40 border border-slate-800 hover:border-indigo-500/50 rounded-2xl transition-all cursor-pointer group flex items-center justify-between shadow-md"
+                      className="p-4 bg-slate-950/80 hover:bg-indigo-950/30 border border-slate-800 hover:border-indigo-500/40 rounded-2xl transition-all flex items-center justify-between shadow-md"
                     >
-                      <div className="space-y-1.5 min-w-0 pr-3">
+                      <div 
+                        onClick={() => {
+                          if (!name.trim()) {
+                            setError('Please enter Your Display Name in the form above first!');
+                            setShowOldChatsDrawer(false);
+                            window.scrollTo({ top: 0, behavior: 'smooth' });
+                            return;
+                          }
+                          setSelectedOldGroup(g);
+                          setOldGroupPasscode('');
+                          setOldGroupError('');
+                        }}
+                        className="space-y-1.5 min-w-0 pr-2 flex-1 cursor-pointer"
+                      >
                         <div className="flex items-center gap-2">
                           <span className="font-bold text-white text-base group-hover:text-indigo-300 transition-colors truncate">
                             #{g.groupName}
@@ -494,8 +508,36 @@ function JoinScreen({ user, onJoin }) {
                         </div>
                       </div>
 
-                      <div className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 group-hover:bg-indigo-600 group-hover:text-white transition-all flex items-center justify-center shrink-0">
-                        <KeyRound size={18} />
+                      {/* Action buttons: Key & Delete Group */}
+                      <div className="flex items-center gap-2 shrink-0">
+                        <button
+                          onClick={() => {
+                            if (!name.trim()) {
+                              setError('Please enter Your Display Name in the form above first!');
+                              setShowOldChatsDrawer(false);
+                              window.scrollTo({ top: 0, behavior: 'smooth' });
+                              return;
+                            }
+                            setSelectedOldGroup(g);
+                            setOldGroupPasscode('');
+                            setOldGroupError('');
+                          }}
+                          className="w-9 h-9 rounded-xl bg-indigo-500/10 text-indigo-400 hover:bg-indigo-600 hover:text-white transition-all flex items-center justify-center cursor-pointer"
+                          title="Rejoin Group"
+                        >
+                          <KeyRound size={18} />
+                        </button>
+
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            setGroupToDelete(g);
+                          }}
+                          className="w-9 h-9 rounded-xl bg-red-500/10 text-red-400 hover:bg-red-600 hover:text-white transition-all flex items-center justify-center cursor-pointer"
+                          title="Delete Old Group Chat"
+                        >
+                          <Trash2 size={16} />
+                        </button>
                       </div>
                     </div>
                   ))}
@@ -506,12 +548,43 @@ function JoinScreen({ user, onJoin }) {
             <div className="pt-4 border-t border-slate-800 text-center">
               <button
                 onClick={() => setShowOldChatsDrawer(false)}
-                className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl text-sm font-semibold transition-colors"
+                className="w-full bg-slate-800 hover:bg-slate-700 text-slate-300 py-3 rounded-xl text-sm font-semibold transition-colors cursor-pointer"
               >
                 Close Drawer
               </button>
             </div>
 
+          </div>
+        </div>
+      )}
+
+      {/* Delete Group Confirmation Modal */}
+      {groupToDelete && (
+        <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+          <div className="max-w-sm w-full bg-slate-900 border border-red-500/30 rounded-2xl p-6 shadow-2xl space-y-4 animate-in fade-in zoom-in duration-200 text-center">
+            <div className="w-12 h-12 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto">
+              <Trash2 size={24} />
+            </div>
+
+            <h3 className="font-bold text-white text-lg">Delete Old Group Chat?</h3>
+            <p className="text-xs text-slate-300 leading-relaxed">
+              Are you sure you want to delete <span className="text-indigo-400 font-bold">#{groupToDelete.groupName}</span> from your old chats history list?
+            </p>
+
+            <div className="flex gap-2 pt-2">
+              <button
+                onClick={() => setGroupToDelete(null)}
+                className="flex-1 bg-slate-800 hover:bg-slate-700 text-slate-300 py-2.5 rounded-xl text-xs font-semibold"
+              >
+                Cancel
+              </button>
+              <button
+                onClick={() => handleDeleteOldGroup(groupToDelete.groupName)}
+                className="flex-1 bg-red-600 hover:bg-red-700 text-white py-2.5 rounded-xl text-xs font-semibold shadow-md"
+              >
+                Yes, Delete
+              </button>
+            </div>
           </div>
         </div>
       )}
@@ -581,7 +654,7 @@ function JoinScreen({ user, onJoin }) {
   );
 }
 
-// --- Chat Room Component ---
+// --- Chat Room Component with Delete for Me & Delete for Everyone ---
 function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [messages, setMessages] = useState([]);
   const [members, setMembers] = useState([]);
@@ -590,6 +663,12 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
   const [showMembers, setShowMembers] = useState(false);
   const [errorToast, setErrorToast] = useState(null);
   
+  // State for message deletion menu modal
+  const [activeDeleteMsg, setActiveDeleteMsg] = useState(null);
+  
+  // Local state for "Delete For Me" message IDs
+  const [deletedForMeIds, setDeletedForMeIds] = useState([]);
+
   // Unique member session ID per tab/device
   const myMemberIdRef = useRef(generateId());
   const myMemberId = myMemberIdRef.current;
@@ -626,7 +705,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
 
     setMembers([selfMember]);
 
-    // Setup local BroadcastChannel for multi-tab sync
     if (typeof BroadcastChannel !== 'undefined') {
       const bc = new BroadcastChannel(`room_bc_${groupName}`);
       channelRef.current = bc;
@@ -639,6 +717,8 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
             const updated = [...prev, payload];
             return updated.sort((a, b) => a.timestamp - b.timestamp);
           });
+        } else if (type === 'DELETE_MSG_EVERYONE') {
+          setMessages((prev) => prev.filter(m => m.id !== payload.msgId));
         } else if (type === 'MEMBER_JOIN' || type === 'HEARTBEAT') {
           setMembers((prev) => {
             const index = prev.findIndex((m) => m.id === payload.id);
@@ -660,7 +740,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       bc.postMessage({ type: 'PING' });
     }
 
-    // Heartbeat Interval to update presence
     const heartbeatInterval = setInterval(() => {
       const now = Date.now();
       const updatedSelf = { ...selfMember, lastSeen: now };
@@ -673,7 +752,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       setDoc(memberDocRef, updatedSelf, { merge: true }).catch(() => {});
     }, 4000);
 
-    // Firestore real-time synchronization
     let unsubscribeMessages;
     let unsubscribeMembers;
 
@@ -734,12 +812,38 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     };
   }, [user, groupName, displayName, myMemberId]);
 
-  // Auto scroll to bottom
+  // Auto scroll
   useEffect(() => {
     messagesEndRef.current?.scrollIntoView({ behavior: 'smooth' });
-  }, [messages]);
+  }, [messages, deletedForMeIds]);
 
-  // Handle Leave Room
+  // Handle Delete Message for Me
+  const handleDeleteForMe = (msgId) => {
+    setDeletedForMeIds(prev => [...prev, msgId]);
+    setActiveDeleteMsg(null);
+  };
+
+  // Handle Delete Message for Everyone
+  const handleDeleteForEveryone = async (msgId) => {
+    // 1. Delete locally from state
+    setMessages(prev => prev.filter(m => m.id !== msgId));
+    setActiveDeleteMsg(null);
+
+    // 2. Broadcast via channel
+    if (channelRef.current) {
+      channelRef.current.postMessage({ type: 'DELETE_MSG_EVERYONE', payload: { msgId } });
+    }
+
+    // 3. Delete from Firestore permanently
+    try {
+      const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
+      await deleteDoc(msgRef);
+    } catch (err) {
+      console.warn("Error deleting message from firestore:", err);
+    }
+  };
+
+  // Leave Room
   const handleLeaveRoom = async () => {
     if (!user) return;
 
@@ -775,7 +879,6 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
       timestamp: Date.now()
     };
 
-    // Immediate local update
     setMessages((prev) => {
       if (prev.some((m) => m.id === msgId)) return prev;
       const updated = [...prev, newMsg];
@@ -783,12 +886,10 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     });
     setInputText('');
 
-    // Broadcast across tabs
     if (channelRef.current) {
       channelRef.current.postMessage({ type: 'NEW_MSG', payload: newMsg });
     }
 
-    // Sync to Firestore permanently
     try {
       const msgRef = doc(db, 'artifacts', appId, 'public', 'data', messagesColName, msgId);
       await setDoc(msgRef, newMsg);
@@ -840,13 +941,13 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
     setTimeout(() => setErrorToast(null), 4000);
   };
 
-  // Check online status
   const isMemberOnline = (member) => {
     if (!member.lastSeen) return true;
     return (Date.now() - member.lastSeen) < 12000;
   };
 
   const onlineCount = members.filter(isMemberOnline).length;
+  const visibleMessages = messages.filter(m => !deletedForMeIds.includes(m.id));
 
   return (
     <div className="flex flex-col h-screen bg-slate-950 relative overflow-hidden">
@@ -904,34 +1005,57 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
           
           {/* Messages List */}
           <div className="flex-1 overflow-y-auto p-4 space-y-4">
-            {messages.length === 0 ? (
+            {visibleMessages.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-slate-500 space-y-3">
                 <MessageSquare size={48} className="opacity-20" />
                 <p className="text-sm text-center">No messages yet. Send the first message!</p>
               </div>
             ) : (
-              messages.map((msg) => {
+              visibleMessages.map((msg) => {
                 const isMe = msg.senderId === myMemberId;
                 
                 return (
-                  <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300`}>
+                  <div key={msg.id} className={`flex flex-col ${isMe ? 'items-end' : 'items-start'} animate-in fade-in slide-in-from-bottom-2 duration-300 group`}>
                     <span className={`text-xs font-semibold mb-1 px-1 flex items-center gap-1 ${isMe ? 'text-indigo-400' : getNameColor(msg.senderName)}`}>
                       {msg.senderName} {isMe && <span className="text-[10px] text-slate-500 font-normal">(You)</span>}
                     </span>
 
-                    <div 
-                      className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 shadow-sm 
-                        ${isMe 
-                          ? 'bg-indigo-600 text-white rounded-tr-sm' 
-                          : 'bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700'
-                        }`}
-                    >
-                      {msg.text && <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>}
-                      {msg.audioData && (
-                        <div className="flex items-center gap-2 py-1">
-                          <Volume2 size={20} className={isMe ? 'text-indigo-200' : 'text-slate-400'} />
-                          <audio controls src={msg.audioData} className="h-8 w-48 sm:w-64 max-w-full [&::-webkit-media-controls-panel]:bg-slate-100" />
-                        </div>
+                    <div className="relative flex items-center gap-2 group">
+                      {/* Delete button option */}
+                      {isMe && (
+                        <button
+                          onClick={() => setActiveDeleteMsg(msg)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-slate-500 hover:text-red-400 bg-slate-900/80 rounded-lg border border-slate-800 cursor-pointer"
+                          title="Delete options"
+                        >
+                          <Trash2 size={14} />
+                        </button>
+                      )}
+
+                      <div 
+                        className={`max-w-[85%] sm:max-w-[70%] rounded-2xl px-4 py-2.5 shadow-sm 
+                          ${isMe 
+                            ? 'bg-indigo-600 text-white rounded-tr-sm' 
+                            : 'bg-slate-800 text-slate-100 rounded-tl-sm border border-slate-700'
+                          }`}
+                      >
+                        {msg.text && <p className="text-[15px] leading-relaxed break-words">{msg.text}</p>}
+                        {msg.audioData && (
+                          <div className="flex items-center gap-2 py-1">
+                            <Volume2 size={20} className={isMe ? 'text-indigo-200' : 'text-slate-400'} />
+                            <audio controls src={msg.audioData} className="h-8 w-48 sm:w-64 max-w-full [&::-webkit-media-controls-panel]:bg-slate-100" />
+                          </div>
+                        )}
+                      </div>
+
+                      {!isMe && (
+                        <button
+                          onClick={() => setActiveDeleteMsg(msg)}
+                          className="opacity-0 group-hover:opacity-100 transition-opacity p-1.5 text-slate-500 hover:text-red-400 bg-slate-900/80 rounded-lg border border-slate-800 cursor-pointer"
+                          title="Delete for me"
+                        >
+                          <Trash2 size={14} />
+                        </button>
                       )}
                     </div>
                   </div>
@@ -1040,6 +1164,47 @@ function ChatRoom({ user, groupName, displayName, onLeave }) {
             )}
           </div>
         </div>
+
+        {/* Delete Message Options Modal */}
+        {activeDeleteMsg && (
+          <div className="fixed inset-0 bg-black/80 backdrop-blur-sm z-50 flex items-center justify-center p-4">
+            <div className="max-w-sm w-full bg-slate-900 border border-slate-800 rounded-2xl p-6 shadow-2xl space-y-4 text-center animate-in fade-in zoom-in duration-200">
+              <div className="w-12 h-12 bg-red-500/20 text-red-400 rounded-full flex items-center justify-center mx-auto">
+                <Trash2 size={24} />
+              </div>
+
+              <h3 className="font-bold text-white text-lg">Delete Message</h3>
+              <p className="text-xs text-slate-300 leading-relaxed">
+                Choose how you want to delete this message.
+              </p>
+
+              <div className="space-y-2 pt-2">
+                <button
+                  onClick={() => handleDeleteForMe(activeDeleteMsg.id)}
+                  className="w-full bg-slate-800 hover:bg-slate-700 text-slate-200 py-3 rounded-xl text-xs font-semibold flex items-center justify-center gap-2 cursor-pointer"
+                >
+                  <EyeOff size={16} /> Delete for Me
+                </button>
+
+                {activeDeleteMsg.senderId === myMemberId && (
+                  <button
+                    onClick={() => handleDeleteForEveryone(activeDeleteMsg.id)}
+                    className="w-full bg-red-600 hover:bg-red-700 text-white py-3 rounded-xl text-xs font-semibold shadow-md flex items-center justify-center gap-2 cursor-pointer"
+                  >
+                    <Trash2 size={16} /> Delete for Everyone
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setActiveDeleteMsg(null)}
+                  className="w-full bg-transparent hover:bg-slate-800 text-slate-400 py-2 rounded-xl text-xs font-medium transition-colors"
+                >
+                  Cancel
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
         
         {/* Mobile Overlay */}
         {showMembers && (
